@@ -22,7 +22,7 @@ struct analogValue {
   uint16_t raw = 1500;
   uint16_t max = 1500;
   uint16_t min = 1500;
-  uint16_t val = 50;
+  uint16_t val = 500;   // scaled 0..1000 (neutral = 500)
 };
 
 struct switch3Position {
@@ -44,7 +44,6 @@ struct RCInput_t {
   switch2Position sa, sd, se;
   switch3Position sb, sc;
   uint16_t LinkQuality = 0;
-  // bool isLinked = false;
   bool isCalibrated = false;
   bool isArmed = false;
 };
@@ -58,6 +57,7 @@ static inline int clampi(int v, int lo, int hi) {
   return (v < lo) ? lo : (v > hi) ? hi : v;
 }
 
+// Integer linear map (inclusive) with clamping
 static inline int imap(int x, int inMin, int inMax, int outMin, int outMax) {
   x = clampi(x, inMin, inMax);
   long num = (long)(x - inMin) * (outMax - outMin);
@@ -68,19 +68,28 @@ static inline int imap(int x, int inMin, int inMax, int outMin, int outMax) {
 uint16_t assignMax(uint16_t a, uint16_t b) { return (b > a) ? b : a; }
 uint16_t assignMin(uint16_t a, uint16_t b) { return (b < a) ? b : a; }
 
+// Centered axes (roll/pitch/yaw): map [min..mid]→[0..500], [mid..max]→[500..1000] with deadzone
 uint16_t scaleCentered(uint16_t raw, uint16_t maxUs, uint16_t minUs, uint16_t deadzoneUs = 20) {
-  if (maxUs <= minUs) return 50;
-  uint16_t mid = (minUs + maxUs) / 2;
-  raw = clampi(raw, minUs, maxUs);
-  if (raw >= mid - deadzoneUs && raw <= mid + deadzoneUs) return 50;
-  return (raw < mid)
-    ? imap(raw, minUs, mid - deadzoneUs, 0, 49)
-    : imap(raw, mid + deadzoneUs, maxUs, 51, 100);
+  if (maxUs <= minUs) return 500;                  // not calibrated → neutral
+  uint16_t mid = (uint16_t)((minUs + maxUs) / 2);
+  raw = (uint16_t)clampi((int)raw, (int)minUs, (int)maxUs);
+
+  // Flat deadzone around mid returns exactly 500
+  if ((raw >= mid - deadzoneUs) && (raw <= mid + deadzoneUs)) return 500;
+
+  if (raw < mid - deadzoneUs) {
+    // Left side: 0..500
+    return (uint16_t)imap((int)raw, (int)minUs, (int)(mid - deadzoneUs), 0, 500);
+  } else {
+    // Right side: 500..1000
+    return (uint16_t)imap((int)raw, (int)(mid + deadzoneUs), (int)maxUs, 500, 1000);
+  }
 }
 
+// Linear axes (throttle, S1): map [min..max] → [0..1000]
 uint16_t scaleLinear(uint16_t raw, uint16_t maxUs, uint16_t minUs) {
-  if (maxUs <= minUs) return 0;
-  return imap(raw, minUs, maxUs, 0, 100);
+  if (maxUs <= minUs) return 0;                    // not calibrated
+  return (uint16_t)imap((int)raw, (int)minUs, (int)maxUs, 0, 1000);
 }
 
 int getLinkQuality(AlfredoCRSF& inst) {
@@ -102,7 +111,7 @@ String decodeSwitch2(switch2Position &sw, uint16_t raw, const char* name) {
   } else {
     sw.up = sw.down = false; state = "MID";
   }
-  if (sw.raw != raw)
+  if (sw.raw != raw && raw > 0)   // suppress noise when raw == 0 (no frame)
     LOGD("SW", "%s → %s (%u)", name, state.c_str(), raw);
   sw.raw = raw;
   return state;
@@ -120,7 +129,7 @@ String decodeSwitch3(switch3Position &sw, uint16_t raw, const char* name) {
   } else {
     sw.up = sw.mid = sw.down = false; state = "UNKNOWN";
   }
-  if (sw.raw != raw)
+  if (sw.raw != raw && raw > 0)
     LOGD("SW", "%s → %s (%u)", name, state.c_str(), raw);
   sw.raw = raw;
   return state;
@@ -180,10 +189,10 @@ void setup() {
 // ============================================================
 void loop() {
   crsf.update();
-  // updateRCInputs();
 
   if (crsf.isLinkUp()) {
     updateRCInputs();
+
     if (RCInput.sa.up) {
       if (!RCInput.isArmed) {
         RCInput.isArmed = true;
@@ -225,7 +234,7 @@ void loop() {
       }
 
       if (!calibSaved && millis() - lastCalibChange > CALIB_SAVE_DELAY) {
-        LOGI("CAL", "Auto-saving calibration after idle");
+        LOGI("CAL", "No changes → auto-saving calibration");
         saveCalibration();
         calibSaved = true;
       }
@@ -258,17 +267,18 @@ void updateRCInputs() {
   RCInput.yaw.raw      = RCInput.ch[3];
   RCInput.s1.raw       = RCInput.ch[9];
 
+  // mapping yang kamu set: SD=CH5, SB=CH6, SC=CH7, SE=CH8, SA=CH4? (lihat bawah)
   decodeSwitch2(RCInput.sa, RCInput.ch[4], "SA");
   decodeSwitch3(RCInput.sb, RCInput.ch[6], "SB");
   decodeSwitch3(RCInput.sc, RCInput.ch[7], "SC");
   decodeSwitch2(RCInput.sd, RCInput.ch[5], "SD");
   decodeSwitch2(RCInput.se, RCInput.ch[8], "SE");
 
-  RCInput.roll.val     = scaleCentered(RCInput.roll.raw, RCInput.roll.max, RCInput.roll.min);
-  RCInput.pitch.val    = scaleCentered(RCInput.pitch.raw, RCInput.pitch.max, RCInput.pitch.min);
-  RCInput.yaw.val      = scaleCentered(RCInput.yaw.raw, RCInput.yaw.max, RCInput.yaw.min);
-  RCInput.throttle.val = scaleLinear(RCInput.throttle.raw, RCInput.throttle.max, RCInput.throttle.min);
-  RCInput.s1.val       = scaleLinear(RCInput.s1.raw, RCInput.s1.max, RCInput.s1.min);
+  RCInput.roll.val     = scaleCentered(RCInput.roll.raw,     RCInput.roll.max,     RCInput.roll.min);
+  RCInput.pitch.val    = scaleCentered(RCInput.pitch.raw,    RCInput.pitch.max,    RCInput.pitch.min);
+  RCInput.yaw.val      = scaleCentered(RCInput.yaw.raw,      RCInput.yaw.max,      RCInput.yaw.min);
+  RCInput.throttle.val = scaleLinear  (RCInput.throttle.raw, RCInput.throttle.max, RCInput.throttle.min);
+  RCInput.s1.val       = scaleLinear  (RCInput.s1.raw,       RCInput.s1.max,       RCInput.s1.min);
   RCInput.LinkQuality  = getLinkQuality(crsf);
 }
 
@@ -343,7 +353,8 @@ void loadCalibration() {
 
 void debugPrintChannels() {
 #if defined(DEBUG)
-  LOGD("CRSF", "R:%4u P:%4u T:%4u Y:%4u | SA(U:%d D:%d) SB(U:%d M:%d D:%d) SC(U:%d M:%d D:%d) SD(U:%d D:%d) SE(U:%d D:%d) | S1:%4u",
+  LOGD("CRSF",
+       "R:%4u P:%4u T:%4u Y:%4u | SA(U:%d D:%d) SB(U:%d M:%d D:%d) SC(U:%d M:%d D:%d) SD(U:%d D:%d) SE(U:%d D:%d) | S1:%4u",
        RCInput.roll.val, RCInput.pitch.val, RCInput.throttle.val, RCInput.yaw.val,
        RCInput.sa.up, RCInput.sa.down,
        RCInput.sb.up, RCInput.sb.mid, RCInput.sb.down,
