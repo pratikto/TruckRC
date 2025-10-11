@@ -33,10 +33,10 @@
 #endif
 
 // Levels
-#define LVL_ERROR  0
-#define LVL_WARN   1
-#define LVL_INFO   2
-#define LVL_DEBUG  3
+#define LVL_ERROR   0
+#define LVL_WARN    1
+#define LVL_INFO    2
+#define LVL_DEBUG   3
 #define LVL_VERBOSE 4
 
 // Timestamp helper (ms since boot)
@@ -45,7 +45,11 @@ static inline const char* __ts(char* buf, size_t n) {
   return buf;
 }
 
-// Core print macro
+// ===== Multi-sink support (Serial + Bluetooth or others) =====
+extern Print* LOG_OUT1;   // define in main.cpp, e.g. &Serial
+extern Print* LOG_OUT2;   // optional second sink, e.g. &BluetoothSerial
+
+// Core print enable
 #ifdef DEBUG
   #define __LOG_ENABLED 1
 #else
@@ -53,14 +57,16 @@ static inline const char* __ts(char* buf, size_t n) {
 #endif
 
 #if __LOG_ENABLED
-  // Internal: build one line with [ts][LVL][tag] message
-  #define __LOG_LINE(color, lvlstr, tag, fmt, ...) do {            \
-    if (Serial) {                                                  \
-      char __tbuf[16];                                             \
-      Serial.printf("%s[%s][%s][%s] " fmt "%s\r\n",                \
-        color, __ts(__tbuf, sizeof(__tbuf)), lvlstr, tag,          \
-        ##__VA_ARGS__, C_RST);                                     \
-    }                                                              \
+  // Build one line and write to both sinks if set
+  #define __LOG_LINE(color, lvlstr, tag, fmt, ...) do {                               \
+    char __tbuf[16];                                                                  \
+    char __buf[256];                                                                  \
+    int __n = snprintf(__buf, sizeof(__buf), "%s[%s][%s][%s] " fmt "%s\r\n",          \
+                       color, __ts(__tbuf, sizeof(__tbuf)), lvlstr, tag,              \
+                       ##__VA_ARGS__, C_RST);                                         \
+    if (__n < 0) break;                                                               \
+    if (LOG_OUT1) LOG_OUT1->write((const uint8_t*)__buf, (size_t)min(__n, (int)sizeof(__buf)-1)); \
+    if (LOG_OUT2) LOG_OUT2->write((const uint8_t*)__buf, (size_t)min(__n, (int)sizeof(__buf)-1)); \
   } while(0)
 #else
   #define __LOG_LINE(color, lvlstr, tag, fmt, ...) do {} while(0)
@@ -68,32 +74,31 @@ static inline const char* __ts(char* buf, size_t n) {
 
 // Public macros per level (compile-time filtered by DEBUG_LEVEL)
 #if __LOG_ENABLED && (DEBUG_LEVEL >= LVL_ERROR)
-  #define LOGE(tag, fmt, ...) __LOG_LINE(C_RED, "ERROR", tag, fmt, ##__VA_ARGS__)
+  #define LOGE(tag, fmt, ...) __LOG_LINE(C_RED,  "ERROR", tag, fmt, ##__VA_ARGS__)
 #else
   #define LOGE(tag, fmt, ...) do {} while(0)
 #endif
 
 #if __LOG_ENABLED && (DEBUG_LEVEL >= LVL_WARN)
-  #define LOGW(tag, fmt, ...) __LOG_LINE(C_YEL, "WARN ", tag, fmt, ##__VA_ARGS__)
+  #define LOGW(tag, fmt, ...) __LOG_LINE(C_YEL,  "WARN ", tag, fmt, ##__VA_ARGS__)
 #else
   #define LOGW(tag, fmt, ...) do {} while(0)
 #endif
 
 #if __LOG_ENABLED && (DEBUG_LEVEL >= LVL_INFO)
-  #define LOGI(tag, fmt, ...) __LOG_LINE(C_GRN, "INFO ", tag, fmt, ##__VA_ARGS__)
+  #define LOGI(tag, fmt, ...) __LOG_LINE(C_GRN,  "INFO ", tag, fmt, ##__VA_ARGS__)
 #else
   #define LOGI(tag, fmt, ...) do {} while(0)
 #endif
 
 #if __LOG_ENABLED && (DEBUG_LEVEL >= LVL_DEBUG)
-  #define LOGD(tag, fmt, ...) __LOG_LINE(C_CYN, "DEBUG", tag, fmt, ##__VA_ARGS__)
+  #define LOGD(tag, fmt, ...) __LOG_LINE(C_CYN,  "DEBUG", tag, fmt, ##__VA_ARGS__)
 #else
   #define LOGD(tag, fmt, ...) do {} while(0)
 #endif
 
 #if __LOG_ENABLED && (DEBUG_LEVEL >= LVL_VERBOSE)
-  #define LOGV(tag, fmt, ...) __LOG_LINE(C_MAG, "VERBO", tag, fmt, ##__VA_ARGS__)
+  #define LOGV(tag, fmt, ...) __LOG_LINE(C_MAG,  "VERBO", tag, fmt, ##__VA_ARGS__)
 #else
   #define LOGV(tag, fmt, ...) do {} while(0)
 #endif
-

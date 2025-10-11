@@ -4,6 +4,14 @@
 #include <Preferences.h>
 #include "Logger.h"
 
+// 🔹 [ADDED for Bluetooth logging]
+#include <BluetoothSerial.h>
+BluetoothSerial BT;
+
+// 🔹 define logger sinks (multi-output)
+Print* LOG_OUT1 = &Serial;
+Print* LOG_OUT2 = nullptr;   // set later to &BT in setup()
+
 // ============================================================
 // ⚙️ Hardware setup
 // ============================================================
@@ -165,6 +173,11 @@ void setup() {
   while (!Serial && (millis() - t0 < 1500)) {}
   LOGI("BOOT", "Serial ready. Starting CRSF...");
 #endif
+
+  // 🔹 [ADDED for Bluetooth logging]
+  BT.begin("ESP32-Logger");    // start Bluetooth SPP
+  LOG_OUT2 = &BT;              // send all logs to BT too
+  LOGI("BOOT", "Bluetooth SPP ready (ESP32-Logger)");
 
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
@@ -353,8 +366,7 @@ void loadCalibration() {
 
 void debugPrintChannels() {
 #if defined(DEBUG)
-  LOGD("CRSF",
-       "R:%4u P:%4u T:%4u Y:%4u | SA(U:%d D:%d) SB(U:%d M:%d D:%d) SC(U:%d M:%d D:%d) SD(U:%d D:%d) SE(U:%d D:%d) | S1:%4u",
+  LOGD("CRSF", "R:%4u P:%4u T:%4u Y:%4u | SA(U:%d D:%d) SB(U:%d M:%d D:%d) SC(U:%d M:%d D:%d) SD(U:%d D:%d) SE(U:%d D:%d) | S1:%4u",
        RCInput.roll.val, RCInput.pitch.val, RCInput.throttle.val, RCInput.yaw.val,
        RCInput.sa.up, RCInput.sa.down,
        RCInput.sb.up, RCInput.sb.mid, RCInput.sb.down,
