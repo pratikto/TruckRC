@@ -1,105 +1,150 @@
 #include <Arduino.h>
 #include <AlfredoCRSF.h>
 #include <HardwareSerial.h>
-#include "Logger.h"   // custom logger (LOGE/W/I/D/V macros)
+#include <Preferences.h>
+#include "Logger.h"
 
 // ============================================================
 // ⚙️ Hardware setup
 // ============================================================
-// XR2 TX → ESP32 RX (GPIO16)
-// GND → GND
-// Power XR2 with a stable 5V
-// TX (GPIO17) is optional, only needed for telemetry back to TX
 #define PIN_RX 16
 #define PIN_TX 17
+#define LED_PIN 2   // ✅ ESP32 DevKitC v4 onboard LED
 
 HardwareSerial crsfSerial(1);
 AlfredoCRSF crsf;
+Preferences prefs;
 
 // ============================================================
-// 🎮 RC channel mapping (Radiomaster Pocket – Mode 2 default)
+// 📦 RC Data Structures
 // ============================================================
-/*
-CH1  → Roll (Right stick X-axis)
-CH2  → Pitch (Right stick Y-axis)
-CH3  → Throttle (Left stick Y-axis)
-CH4  → Yaw (Left stick X-axis)
-CH5  → SA switch (3-position, top-left)
-CH6  → SB switch (3-position, mid-left)
-CH7  → SC switch (3-position, mid-right)
-CH8  → SD switch (3-position, top-right)
-CH9  → SE momentary switch (rear-right)
-CH10 → S1 potentiometer (rear-left knob)
-CH11–CH16 → Optional / custom-mapped in EdgeTX mixers
-*/
-
-// ============================================================
-// 📦 Global data structure for RC inputs
-// ============================================================
-
-struct analogValue
-{
+struct analogValue {
   uint16_t raw = 1500;
   uint16_t max = 1500;
   uint16_t min = 1500;
-  uint16_t val = 1500;
+  uint16_t val = 50;
 };
 
-struct swith3Position
-{
+struct switch3Position {
   uint16_t raw = 1500;
-  bool up;
-  bool mid;
-  bool down;
+  bool up = false;
+  bool mid = false;
+  bool down = false;
 };
 
-struct swith2Position
-{
+struct switch2Position {
   uint16_t raw = 1500;
-  bool up;
-  bool down;
+  bool up = false;
+  bool down = false;
 };
 
 struct RCInput_t {
-  uint16_t ch[16];      // all 16 CRSF channel values in µs (1000–2000)
-  analogValue roll;     // CH1
-  analogValue pitch;    // CH2
-  analogValue throttle; // CH3
-  analogValue yaw;      // CH4
-  swith2Position sa;    // CH5
-  swith3Position sb;    // CH6
-  swith3Position sc;    // CH7
-  swith2Position sd;    // CH8
-  swith2Position se;    // CH9 (momentary)
-  analogValue s1;       // CH10 (analog knob)
-  uint16_t LinkQuality; // Link quality
+  uint16_t ch[16];
+  analogValue roll, pitch, throttle, yaw, s1;
+  switch2Position sa, sd, se;
+  switch3Position sb, sc;
+  uint16_t LinkQuality = 0;
+  // bool isLinked = false;
+  bool isCalibrated = false;
+  bool isArmed = false;
 };
 
 RCInput_t RCInput;
-bool armed = false;
-
 
 // ============================================================
-// 🧠 Helper functions declaration
+// 🔧 Utilities & helpers
+// ============================================================
+static inline int clampi(int v, int lo, int hi) {
+  return (v < lo) ? lo : (v > hi) ? hi : v;
+}
+
+static inline int imap(int x, int inMin, int inMax, int outMin, int outMax) {
+  x = clampi(x, inMin, inMax);
+  long num = (long)(x - inMin) * (outMax - outMin);
+  long den = (long)(inMax - inMin);
+  return (int)(outMin + (den ? (num / den) : 0));
+}
+
+uint16_t assignMax(uint16_t a, uint16_t b) { return (b > a) ? b : a; }
+uint16_t assignMin(uint16_t a, uint16_t b) { return (b < a) ? b : a; }
+
+uint16_t scaleCentered(uint16_t raw, uint16_t maxUs, uint16_t minUs, uint16_t deadzoneUs = 20) {
+  if (maxUs <= minUs) return 50;
+  uint16_t mid = (minUs + maxUs) / 2;
+  raw = clampi(raw, minUs, maxUs);
+  if (raw >= mid - deadzoneUs && raw <= mid + deadzoneUs) return 50;
+  return (raw < mid)
+    ? imap(raw, minUs, mid - deadzoneUs, 0, 49)
+    : imap(raw, mid + deadzoneUs, maxUs, 51, 100);
+}
+
+uint16_t scaleLinear(uint16_t raw, uint16_t maxUs, uint16_t minUs) {
+  if (maxUs <= minUs) return 0;
+  return imap(raw, minUs, maxUs, 0, 100);
+}
+
+int getLinkQuality(AlfredoCRSF& inst) {
+  const crsfLinkStatistics_t* stat_ptr = inst.getLinkStatistics();
+  return stat_ptr ? (int)stat_ptr->uplink_Link_quality : 0;
+}
+
+// ============================================================
+// 🧩 Decode switch helpers (with string return)
 // ============================================================
 
-// Read all CRSF channels and update the global struct
+// Decode 2-position switch
+String decodeSwitch2(switch2Position &sw, uint16_t raw, const char* name) {
+  String state = "UNKNOWN";
+  if (raw > 1800) {
+    sw.up = true; sw.down = false; state = "UP";
+  } else if (raw < 1200) {
+    sw.up = false; sw.down = true; state = "DOWN";
+  } else {
+    sw.up = sw.down = false; state = "MID";
+  }
+  if (sw.raw != raw)
+    LOGD("SW", "%s → %s (%u)", name, state.c_str(), raw);
+  sw.raw = raw;
+  return state;
+}
+
+// Decode 3-position switch
+String decodeSwitch3(switch3Position &sw, uint16_t raw, const char* name) {
+  String state = "UNKNOWN";
+  if (raw > 1800) {
+    sw.up = true; sw.mid = false; sw.down = false; state = "UP";
+  } else if (raw >= 1400 && raw <= 1600) {
+    sw.up = false; sw.mid = true; sw.down = false; state = "MID";
+  } else if (raw < 1200) {
+    sw.up = false; sw.mid = false; sw.down = true; state = "DOWN";
+  } else {
+    sw.up = sw.mid = sw.down = false; state = "UNKNOWN";
+  }
+  if (sw.raw != raw)
+    LOGD("SW", "%s → %s (%u)", name, state.c_str(), raw);
+  sw.raw = raw;
+  return state;
+}
+
+// ============================================================
+// 💾 Persistent calibration (NVS)
+// ============================================================
+void saveCalibration();
+void loadCalibration();
+
+// ============================================================
+// 🧠 Function Prototypes
+// ============================================================
 void updateRCInputs();
-
-// Print all channels (only when DEBUG mode is active)
 void debugPrintChannels();
+void updateLED();
 
-// Method to get the link quality from CRSF instance
-int getLinkQuality(AlfredoCRSF& crsf);
-
-//get max value for calibration
-uint16_t assignMax(uint16_t a, uint16_t b);
-
-//get min value for calibration
-uint16_t assignMin(uint16_t a, uint16_t b);
-
-//scalling raw value from max and min value
-uint16_t scalling(uint16_t raw, uint16_t max, uint16_t min);
+// ============================================================
+// ⏱️ Auto-save calibration variables
+// ============================================================
+unsigned long lastCalibChange = 0;
+const unsigned long CALIB_SAVE_DELAY = 3000;
+bool calibSaved = false;
 
 // ============================================================
 // 🚀 Setup
@@ -112,123 +157,199 @@ void setup() {
   LOGI("BOOT", "Serial ready. Starting CRSF...");
 #endif
 
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+
   crsfSerial.begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_RX, PIN_TX);
   crsf.begin(crsfSerial);
   LOGI("CRSF", "UART1 @ %d baud (RX=%d TX=%d)", (int)CRSF_BAUDRATE, PIN_RX, PIN_TX);
+
+  loadCalibration();
+
+  if (RCInput.isCalibrated) {
+    LOGI("LED", "Calibration found → Blink 3x");
+    for (int i = 0; i < 3; i++) {
+      digitalWrite(LED_PIN, HIGH); delay(150);
+      digitalWrite(LED_PIN, LOW); delay(150);
+    }
+  }
 }
 
 // ============================================================
 // 🔁 Main loop
 // ============================================================
 void loop() {
-  crsf.update();        // process incoming CRSF packets
-  updateRCInputs();     // refresh all channel values
+  crsf.update();
+  // updateRCInputs();
 
-  // Check if RX1 is connected
   if (crsf.isLinkUp()) {
-    // RX1 is connected
-    // SA up (value >1800) → system armed
-    if (RCInput.sa.raw > 1800) {
-      if(not armed){
-        armed = true;
+    updateRCInputs();
+    if (RCInput.sa.up) {
+      if (!RCInput.isArmed) {
+        RCInput.isArmed = true;
         LOGI("RC", "SA UP → system armed");
+        if (!RCInput.isCalibrated) saveCalibration();
       }
-      // Print all channels (debug only)
       debugPrintChannels();
-    }
-    else if (RCInput.sa.raw < 1200){
-        LOGI("RC", "SA DOWN → system disarmed, Calibarion Mode");
-        armed = false;
-        //get max value   
-        RCInput.roll.max = assignMax(RCInput.roll.max, RCInput.roll.raw);   
-        RCInput.pitch.max = assignMax(RCInput.roll.max, RCInput.roll.raw);
-        RCInput.throttle.max = assignMax(RCInput.roll.max, RCInput.roll.raw);     
-        RCInput.yaw.max = assignMax(RCInput.roll.max, RCInput.roll.raw);
-        RCInput.s1.max = assignMax(RCInput.s1.max, RCInput.s1.raw);     
-    
-        //get min value   
-        RCInput.roll.min = assignMin(RCInput.roll.min, RCInput.roll.raw);   
-        RCInput.pitch.min = assignMin(RCInput.roll.min, RCInput.roll.raw);
-        RCInput.throttle.min = assignMin(RCInput.roll.min, RCInput.roll.raw);     
-        RCInput.yaw.min = assignMin(RCInput.roll.min, RCInput.roll.raw);   
-        RCInput.s1.max = assignMax(RCInput.s1.max, RCInput.s1.raw);  
-      } 
     } 
-  else{
-    LOGI("CRSF","Receiver is not connected");
+    else if (RCInput.sa.down) {
+      if (RCInput.isArmed)
+        LOGI("RC", "SA DOWN → system disarmed, entering calibration mode");
+      RCInput.isArmed = false;
+
+      bool changed = false;
+      auto updateMinMax = [&](analogValue& a, uint16_t raw) {
+        uint16_t oldMin = a.min, oldMax = a.max;
+        a.max = assignMax(a.max, raw);
+        a.min = assignMin(a.min, raw);
+        if (a.min != oldMin || a.max != oldMax) changed = true;
+      };
+
+      updateMinMax(RCInput.roll, RCInput.roll.raw);
+      updateMinMax(RCInput.pitch, RCInput.pitch.raw);
+      updateMinMax(RCInput.throttle, RCInput.throttle.raw);
+      updateMinMax(RCInput.yaw, RCInput.yaw.raw);
+      updateMinMax(RCInput.s1, RCInput.s1.raw);
+
+      LOGI("CAL", "ROLL[min:%4u max:%4u] PITCH[min:%4u max:%4u] YAW[min:%4u max:%4u]",
+           RCInput.roll.min, RCInput.roll.max,
+           RCInput.pitch.min, RCInput.pitch.max,
+           RCInput.yaw.min, RCInput.yaw.max);
+      LOGI("CAL", "THR[min:%4u max:%4u] S1[min:%4u max:%4u]",
+           RCInput.throttle.min, RCInput.throttle.max,
+           RCInput.s1.min, RCInput.s1.max);
+
+      if (changed) {
+        lastCalibChange = millis();
+        calibSaved = false;
+      }
+
+      if (!calibSaved && millis() - lastCalibChange > CALIB_SAVE_DELAY) {
+        LOGI("CAL", "Auto-saving calibration after idle");
+        saveCalibration();
+        calibSaved = true;
+      }
+    }
+  } 
+  else {
+    if (RCInput.isArmed) {
+      LOGW("FAILSAFE", "Receiver lost → disarmed");
+      RCInput.isArmed = false;
+    }
+    else{
+      LOGI("CRSF", "Receiver disconnected");
+    }
+    RCInput.throttle.val = 0;
   }
 
-  // delay(50); // throttle loop rate, avoid flooding serial monitor
+  updateLED();
+  delay(50);
 }
 
 // ============================================================
-// 🧠 Helper functions
+// 🧩 Helper Functions
 // ============================================================
-
-// Read all CRSF channels and update the global struct
 void updateRCInputs() {
-  RCInput.LinkQuality = getLinkQuality(crsf);
-  for (int i = 0; i < 16; i++) {
-    RCInput.ch[i] = crsf.getChannel(i + 1);
-  }
+  for (int i = 0; i < 16; i++) RCInput.ch[i] = crsf.getChannel(i + 1);
 
   RCInput.roll.raw     = RCInput.ch[0];
   RCInput.pitch.raw    = RCInput.ch[1];
   RCInput.throttle.raw = RCInput.ch[2];
   RCInput.yaw.raw      = RCInput.ch[3];
-  // RCInput.sa.val       = RCInput.ch[4];
-  // RCInput.sb.val       = RCInput.ch[5];
-  // RCInput.sc.val       = RCInput.ch[6];
-  // RCInput.sd.val       = RCInput.ch[7];
-  // RCInput.se.val       = RCInput.ch[8];
   RCInput.s1.raw       = RCInput.ch[9];
 
-  RCInput.roll.val = scalling(RCInput.roll.raw, RCInput.roll.max, RCInput.roll.min);
-  RCInput.pitch.val = scalling(RCInput.pitch.raw, RCInput.pitch.max, RCInput.pitch.min);
-  RCInput.throttle.val = scalling(RCInput.throttle.raw, RCInput.throttle.max, RCInput.throttle.min);
-  RCInput.yaw.val = scalling(RCInput.yaw.raw, RCInput.yaw.max, RCInput.yaw.min);
-  RCInput.s1.val = scalling(RCInput.s1.raw, RCInput.s1.max, RCInput.s1.min);
+  decodeSwitch2(RCInput.sa, RCInput.ch[4], "SA");
+  decodeSwitch3(RCInput.sb, RCInput.ch[6], "SB");
+  decodeSwitch3(RCInput.sc, RCInput.ch[7], "SC");
+  decodeSwitch2(RCInput.sd, RCInput.ch[5], "SD");
+  decodeSwitch2(RCInput.se, RCInput.ch[8], "SE");
 
+  RCInput.roll.val     = scaleCentered(RCInput.roll.raw, RCInput.roll.max, RCInput.roll.min);
+  RCInput.pitch.val    = scaleCentered(RCInput.pitch.raw, RCInput.pitch.max, RCInput.pitch.min);
+  RCInput.yaw.val      = scaleCentered(RCInput.yaw.raw, RCInput.yaw.max, RCInput.yaw.min);
+  RCInput.throttle.val = scaleLinear(RCInput.throttle.raw, RCInput.throttle.max, RCInput.throttle.min);
+  RCInput.s1.val       = scaleLinear(RCInput.s1.raw, RCInput.s1.max, RCInput.s1.min);
+  RCInput.LinkQuality  = getLinkQuality(crsf);
 }
 
-// Print all channels (only when DEBUG mode is active)
+void updateLED() {
+  static bool ledState = false;
+  static unsigned long lastBlink = 0;
+  static unsigned long lastHeartbeat = 0;
+
+  if (RCInput.isArmed) {
+    digitalWrite(LED_PIN, HIGH);
+    return;
+  }
+
+  if (crsf.isLinkUp() && RCInput.sa.down) {
+    if (millis() - lastBlink > 500) {
+      ledState = !ledState;
+      digitalWrite(LED_PIN, ledState);
+      lastBlink = millis();
+    }
+    return;
+  }
+
+  if (crsf.isLinkUp()) {
+    unsigned long now = millis();
+    if (now - lastHeartbeat < 100) digitalWrite(LED_PIN, HIGH);
+    else if (now - lastHeartbeat < 500) digitalWrite(LED_PIN, LOW);
+    else if (now - lastHeartbeat >= 5000) lastHeartbeat = now;
+    return;
+  }
+
+  digitalWrite(LED_PIN, LOW);
+}
+
+void saveCalibration() {
+  prefs.begin("rc-cal", false);
+  prefs.putUShort("roll_min", RCInput.roll.min);
+  prefs.putUShort("roll_max", RCInput.roll.max);
+  prefs.putUShort("pitch_min", RCInput.pitch.min);
+  prefs.putUShort("pitch_max", RCInput.pitch.max);
+  prefs.putUShort("thrt_min", RCInput.throttle.min);
+  prefs.putUShort("thrt_max", RCInput.throttle.max);
+  prefs.putUShort("yaw_min", RCInput.yaw.min);
+  prefs.putUShort("yaw_max", RCInput.yaw.max);
+  prefs.putUShort("s1_min", RCInput.s1.min);
+  prefs.putUShort("s1_max", RCInput.s1.max);
+  prefs.putBool("isCal", true);
+  prefs.end();
+  RCInput.isCalibrated = true;
+  LOGI("NVS", "Calibration saved");
+}
+
+void loadCalibration() {
+  prefs.begin("rc-cal", true);
+  RCInput.roll.min     = prefs.getUShort("roll_min", 1500);
+  RCInput.roll.max     = prefs.getUShort("roll_max", 1500);
+  RCInput.pitch.min    = prefs.getUShort("pitch_min", 1500);
+  RCInput.pitch.max    = prefs.getUShort("pitch_max", 1500);
+  RCInput.throttle.min = prefs.getUShort("thrt_min", 1500);
+  RCInput.throttle.max = prefs.getUShort("thrt_max", 1500);
+  RCInput.yaw.min      = prefs.getUShort("yaw_min", 1500);
+  RCInput.yaw.max      = prefs.getUShort("yaw_max", 1500);
+  RCInput.s1.min       = prefs.getUShort("s1_min", 1500);
+  RCInput.s1.max       = prefs.getUShort("s1_max", 1500);
+  RCInput.isCalibrated = prefs.getBool("isCal", false);
+  prefs.end();
+
+  if (RCInput.isCalibrated)
+    LOGI("NVS", "Calibration loaded");
+  else
+    LOGW("NVS", "No calibration found; please calibrate");
+}
+
 void debugPrintChannels() {
 #if defined(DEBUG)
-  LOGD("CRSF",
-       "roll: %4d pitch: %4d throttle: %4d yaw: %4d sa: %4d sb: %4d sc: %4d sd: %4d se: %4d s1: %4d link: %4d",
-       RCInput.roll.val,
-       RCInput.pitch.val, 
-       RCInput.throttle.val, 
-       RCInput.yaw.val,
-       RCInput.ch[4], 
-       RCInput.ch[5], 
-       RCInput.ch[6], 
-       RCInput.ch[7],
-       RCInput.ch[8], 
-       RCInput.s1.val, 
-       RCInput.LinkQuality);
+  LOGD("CRSF", "R:%4u P:%4u T:%4u Y:%4u | SA(U:%d D:%d) SB(U:%d M:%d D:%d) SC(U:%d M:%d D:%d) SD(U:%d D:%d) SE(U:%d D:%d) | S1:%4u",
+       RCInput.roll.val, RCInput.pitch.val, RCInput.throttle.val, RCInput.yaw.val,
+       RCInput.sa.up, RCInput.sa.down,
+       RCInput.sb.up, RCInput.sb.mid, RCInput.sb.down,
+       RCInput.sc.up, RCInput.sc.mid, RCInput.sc.down,
+       RCInput.sd.up, RCInput.sd.down,
+       RCInput.se.up, RCInput.se.down,
+       RCInput.s1.val);
 #endif
-}
-
-// Method to get the link quality from CRSF instance
-int getLinkQuality(AlfredoCRSF& crsf) {
-  const crsfLinkStatistics_t* stat_ptr = crsf.getLinkStatistics();
-  return stat_ptr->uplink_Link_quality;
-}
-
-//get max value for calibration
-uint16_t assignMax(uint16_t a, uint16_t b){
-  if(a >= b)
-    return b;
-}
-
-//get min value for calibration
-uint16_t assignMin(uint16_t a, uint16_t b){
-  if(a <= b)
-    return b;
-}
-
-//scalling raw value from max and min value
-uint16_t scalling(uint16_t raw, uint16_t max, uint16_t min){
-
 }
