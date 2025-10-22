@@ -11,9 +11,11 @@ public:
 
   explicit PocketMaster(AlfredoCRSF& crsf) : crsf_(crsf) {}
 
+
   bool   begin(const char* nvs_ns = "rc-cal");
   void   update();
   bool   isLinkUp() const { return link_up_; }
+  // bool   isCallibrated();
 
   uint16_t raw(Axis a) const;
   uint16_t val(Axis a) const;
@@ -47,12 +49,18 @@ private:
   static constexpr uint8_t CH_SE       = 9;
   static constexpr uint8_t CH_S1       = 10;
 
+  static inline uint16_t readLinkQuality(AlfredoCRSF& crsf) {
+    if (const crsfLinkStatistics_t* st = crsf.getLinkStatistics())
+        return (uint16_t)st->uplink_Link_quality;
+    return 0;
+  }
+  
   struct Analog {
     uint16_t raw = 1500, min = 1500, max = 1500, val = 500; // val: 0..1000
   };
 
-  // helpers
-  static inline uint16_t clampu(uint16_t v, uint16_t lo, uint16_t hi) {
+      // helpers
+  static inline uint16_t clampi(uint16_t v, uint16_t lo, uint16_t hi) {
     return (v < lo) ? lo : (v > hi) ? hi : v;
   }
   static inline uint16_t imap(uint16_t x, uint16_t inMin, uint16_t inMax,
@@ -60,6 +68,7 @@ private:
     if (inMax <= inMin) return outMin;
     return outMin + (uint32_t)(x - inMin) * (outMax - outMin) / (inMax - inMin);
   }
+
   uint16_t scaleCentered(uint16_t raw, uint16_t min, uint16_t max) const;
   uint16_t scaleLinear  (uint16_t raw, uint16_t min, uint16_t max) const;
 
