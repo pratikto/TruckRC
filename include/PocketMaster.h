@@ -6,8 +6,9 @@
 class PocketMaster {
 public:
   enum class Axis { Roll, Pitch, Throttle, Yaw, S1 };
-  enum class Sw2  { Down, Up, Unknown };
-  enum class Sw3  { Down, Mid, Up, Unknown };
+  // enum class Sw2  { Down, Up, Unknown };
+  // enum class Sw3  { Down, Mid, Up, Unknown };
+  enum class Switch  { SA, SB, SC, SD, SE};  
 
   explicit PocketMaster(AlfredoCRSF& crsf) : crsf_(crsf) {}
 
@@ -15,16 +16,19 @@ public:
   bool   begin(const char* nvs_ns = "rc-cal");
   void   update();
   bool   isLinkUp() const { return link_up_; }
-  // bool   isCallibrated();
+  bool   isCallibrated;
 
   uint16_t raw(Axis a) const;
+  uint16_t raw(Switch a) const;
+  
   uint16_t val(Axis a) const;
+  uint16_t val(Switch a) const;
 
-  Sw2 sa() const { return sa_; }  // CH5
-  Sw3 sb() const { return sb_; }  // CH6
-  Sw3 sc() const { return sc_; }  // CH7
-  Sw2 sd() const { return sd_; }  // CH8
-  Sw2 se() const { return se_; }  // CH9
+  // Sw2 sa() const { return sa_; }  // CH5
+  // Sw3 sb() const { return sb_; }  // CH6
+  // Sw3 sc() const { return sc_; }  // CH7
+  // Sw2 sd() const { return sd_; }  // CH8
+  // Sw2 se() const { return se_; }  // CH9
 
   uint16_t linkQuality() const { return lq_; }
 
@@ -56,10 +60,22 @@ private:
   }
   
   struct Analog {
-    uint16_t raw = 1500, min = 1500, max = 1500, val = 500; // val: 0..1000
+    uint16_t raw = 1500, 
+    min = 1500, 
+    max = 1500, 
+    val = 500; // val: 0..1000
   };
 
-      // helpers
+  struct Button {
+    uint16_t raw = 1500;
+    uint16_t val = 0;   //0 = Unknown, 1 = up, 2 = mid, 3 = down
+    bool up = false;
+    bool mid = false;
+    bool down = false;
+    bool unknown = true;
+  };
+
+  // helpers
   static inline uint16_t clampi(uint16_t v, uint16_t lo, uint16_t hi) {
     return (v < lo) ? lo : (v > hi) ? hi : v;
   }
@@ -69,16 +85,20 @@ private:
     return outMin + (uint32_t)(x - inMin) * (outMax - outMin) / (inMax - inMin);
   }
 
-  uint16_t scaleCentered(uint16_t raw, uint16_t min, uint16_t max) const;
-  uint16_t scaleLinear  (uint16_t raw, uint16_t min, uint16_t max) const;
+  void decodeSwitch (Button &v, uint16_t raw);
+  // uint16_t scaleCentered(uint16_t raw, uint16_t min, uint16_t max) const;
+  // uint16_t scaleLinear  (uint16_t raw, uint16_t min, uint16_t max) const;
+  void scaleCentered(Analog &axis, uint16_t raw) const;
+  void scaleLinear(Analog &axis, uint16_t raw) const;
 
   AlfredoCRSF& crsf_;
   Preferences  nvs_;
   const char*  nvs_ns_ = "rc-cal";
 
   Analog roll_, pitch_, throttle_, yaw_, s1_;
-  Sw2 sa_ = Sw2::Unknown, sd_ = Sw2::Unknown, se_ = Sw2::Unknown;
-  Sw3 sb_ = Sw3::Unknown, sc_ = Sw3::Unknown;
+  Button sa_, sb_, sc_, sd_, se_;
+  // Sw2 sa_ = Sw2::Unknown, sd_ = Sw2::Unknown, se_ = Sw2::Unknown;
+  // Sw3 sb_ = Sw3::Unknown, sc_ = Sw3::Unknown;
 
   uint16_t lq_ = 0;
   bool     link_up_ = false;
