@@ -41,47 +41,18 @@ void PocketMaster::update() {
   sd_.raw       = ch[SD];
   se_.raw       = ch[SE];
 
-  // roll_.val     = scaleCentered(roll_.raw, roll_.min, roll_.max);
-  // pitch_.val    = scaleCentered(pitch_.raw, pitch_.min, pitch_.max);
-  // yaw_.val      = scaleCentered(yaw_.raw, yaw_.min, yaw_.max);
-  // throttle_.val = scaleLinear(throttle_.raw, throttle_.min, throttle_.max);
-  // s1_.val       = scaleLinear(s1_.raw, s1_.min, s1_.max);
-  
-  // scaleCentered(roll_, ch[ROLL]);
-  // scaleCentered(pitch_,ch[PITCH]);
-  // scaleCentered(yaw_, ch[YAW]);
-  // scaleLinear(throttle_, ch[THROTTLE]);
-  // scaleLinear(s1_, ch[S1]);
-
   scaleCentered(roll_);
   scaleCentered(pitch_);
   scaleCentered(yaw_);
   scaleLinear(throttle_);
   scaleLinear(s1_);
 
-  // auto dec3 = [](uint16_t v) -> sw {
-  //   if (v > 1800) return sw::Up;
-  //   if (v < 1200) return sw::Down;
-  //   if (v >= 1400 && v <= 1600) return sw::Mid;
-  //   return sw::Unknown;
-  // };
-
-  // sa_.raw = ch[CH_SA];
-  // sb_.raw = ch[CH_SB];
-  // sc_.raw = ch[CH_SC];
-  // sd_.raw = ch[CH_SD];
-  // se_.raw = ch[CH_SE];
-
-  // decodeSwitch(sa_, ch[SA]);
-  // decodeSwitch(sb_, ch[SB]);
-  // decodeSwitch(sc_, ch[SC]);
-  // decodeSwitch(sd_, ch[SD]);
-  // decodeSwitch(se_, ch[SE]);
   decodeSwitch(sa_);
   decodeSwitch(sb_);
   decodeSwitch(sc_);
   decodeSwitch(sd_);
   decodeSwitch(se_);
+
   lq_ = readLinkQuality(crsf_);
 }
 
@@ -145,34 +116,11 @@ void PocketMaster::startCalibration() {
   roll_.min = pitch_.min = throttle_.min = yaw_.min = s1_.min = 2000;
   roll_.max = pitch_.max = throttle_.max = yaw_.max = s1_.max = 1000;
 
-  //adding code from initial main.cpp
-  // bool changed = false;
-  // auto updateMinMax = [&](Analog& a, uint16_t raw) {
-  //   uint16_t oldMin = a.min, oldMax = a.max;
-  //   a.max = assignMax(a.max, raw);
-  //   a.min = assignMin(a.min, raw);
-  //   if (a.min != oldMin || a.max != oldMax) changed = true;
-  // };
-
-  // updateMinMax(roll_, roll_.raw);
-  // updateMinMax(pitch_, pitch_.raw);
-  // updateMinMax(throttle_, throttle_.raw);
-  // updateMinMax(yaw_, yaw_.raw);
-  // updateMinMax(s1_, s1_.raw);
-
   updateMinMax(roll_);
   updateMinMax(pitch_);
   updateMinMax(throttle_);
   updateMinMax(yaw_);
   updateMinMax(s1_);
-
-  // LOGI("CAL", "ROLL[min:%4u max:%4u] PITCH[min:%4u max:%4u] YAW[min:%4u max:%4u]",
-  //      RCInput.roll.min, RCInput.roll.max,
-  //      RCInput.pitch.min, RCInput.pitch.max,
-  //      RCInput.yaw.min, RCInput.yaw.max);
-  // LOGI("CAL", "THR[min:%4u max:%4u] S1[min:%4u max:%4u]",
-  //      RCInput.throttle.min, RCInput.throttle.max,
-  //      RCInput.s1.min, RCInput.s1.max);
 
   if (MaxMinChanged) {
     lastCalibChange = millis();
@@ -246,55 +194,6 @@ void PocketMaster::updateMinMax(Analog& axis){//, uint16_t raw) {
     axis.min = axis.raw;
   }
 }    
-// uint16_t PocketMaster::scaleCentered(uint16_t raw, uint16_t min, uint16_t max) const{
-//   if (max <= min) return 500;                  // not calibrated → neutral
-//   uint16_t mid = (uint16_t)((min + max) / 2);
-//   raw = (uint16_t)clampi((int)raw, (int)min, (int)max);
-
-//   // Flat deadzone around mid returns exactly 500
-//   if ((raw >= mid - deadzone_us_) && (raw <= mid + deadzone_us_)) return 500;
-
-//   if (raw < mid - deadzone_us_) {
-//     // Left side: 0..500
-//     return (uint16_t)imap((int)raw, (int)min, (int)(mid - deadzone_us_), 0, 500);
-//   } else {
-//     // Right side: 500..1000
-//     return (uint16_t)imap((int)raw, (int)(mid + deadzone_us_), (int)max, 500, 1000);
-//   }
-// }
-
-// void PocketMaster::scaleCentered(Analog &axis, uint16_t raw) const{
-// void PocketMaster::scaleCentered(Analog &axis) const{  
-  // axis.raw = raw;
-
-//   if (axis.max <= axis.min){
-//      axis.val = 500;                  // not calibrated → neutral
-//   }
-//   else{
-//     uint16_t mid = (uint16_t)((axis.min + axis.max) / 2);
-//     raw = (uint16_t)clampi((int)raw, (int)axis.min, (int)axis.max);
-
-//     // Flat deadzone around mid returns exactly 500
-//     if ((raw >= mid - deadzone_us_) && (raw <= mid + deadzone_us_)) 
-//       axis.val = 500;
-//     else{
-//       uint16_t mid = (uint16_t)((axis.min + axis.max) / 2);
-//       raw = (uint16_t)clampi((int)raw, (int)axis.min, (int)axis.max);
-
-//       // Flat deadzone around mid returns exactly 500
-//       if ((raw >= mid - deadzone_us_) && (raw <= mid + deadzone_us_)) axis.val = 500;
-
-//       if (raw < mid - deadzone_us_) {
-//         // Left side: 0..500
-//         axis.val =  (uint16_t)imap((int)raw, (int)axis.min, (int)(mid - deadzone_us_), 0, 500);
-//       } else {
-//         // Right side: 500..1000
-//         axis.val = (uint16_t)imap((int)raw, (int)(mid + deadzone_us_), (int)axis.max, 500, 1000);
-//       }      
-//     }
-
-//   }
-// }
 
 void PocketMaster::scaleCentered(Analog &axis) const{  
   
@@ -327,14 +226,6 @@ void PocketMaster::scaleCentered(Analog &axis) const{
     }
   }
 };
-
-// void PocketMaster::scaleLinear  (Analog &axis, uint16_t raw) const{
-//   axis.raw = raw;
-//   if (axis.max <= axis.min)
-//     axis.val = 0; // not calibrated
-//   else
-//     axis.val =(uint16_t)imap((int)raw, (int)axis.max, (int)axis.min, 0, 1000);
-// }
 
 void PocketMaster::scaleLinear  (Analog &axis) const{
   uint16_t tempVal = axis.raw;

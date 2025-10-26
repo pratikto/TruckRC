@@ -17,69 +17,44 @@
 
 class PocketMaster {
 public:
-  // enum class Axis { Roll, Pitch, Throttle, Yaw, S1 };
-  // enum class Sw2  { Down, Up, Unknown };
-  // enum class Sw3  { Down, Mid, Up, Unknown };
-  // enum class Switch  { SA, SB, SC, SD, SE}; 
-  //   // Pocket (Mode 2) channel mapping:
-  // static constexpr uint8_t ROLL     = 1;
-  // static constexpr uint8_t PITCH    = 2;
-  // static constexpr uint8_t THROTTLE = 3;
-  // static constexpr uint8_t YAW      = 4;
-  // static constexpr uint8_t SA       = 5;
-  // static constexpr uint8_t SB       = 6;
-  // static constexpr uint8_t SC       = 7;
-  // static constexpr uint8_t SD       = 8;
-  // static constexpr uint8_t SE       = 9;
-  // static constexpr uint8_t S1       = 10; 
-
+  //initialization function
   explicit PocketMaster(AlfredoCRSF& crsf) : crsf_(crsf) {}
+  bool begin(const char* nvs_ns = "rc-cal");
+  void update();
 
-
-  bool   begin(const char* nvs_ns = "rc-cal");
-  void   update();
-  bool   isLinkUp() const { return link_up_; }
-  bool isCalibSaved() {return calibSaved;}
-  bool   isCallibrated;
-  bool   isArmed;
-  bool MaxMinChanged = false;
-  uint16_t raw(uint8_t a) const;
-  // uint16_t raw(uint8_t a) const;
+  bool isLinkUp() const { return link_up_; }
+  bool isArmed;
   
+  //data passing function
+  uint16_t raw(uint8_t a) const;
   uint16_t val(uint8_t a) const;
-  // uint16_t val(uint8_t a) const;
   uint16_t max(uint8_t a) const;
   uint16_t min(uint8_t a) const;
 
-  // Sw2 sa() const { return sa_; }  // CH5
-  // Sw3 sb() const { return sb_; }  // CH6
-  // Sw3 sc() const { return sc_; }  // CH7
-  // Sw2 sd() const { return sd_; }  // CH8
-  // Sw2 se() const { return se_; }  // CH9
-
+  //check link quality
   uint16_t linkQuality() const { return lq_; }
 
+// ============================================================
+// 💾 Persistent calibration (NVS)
+// ============================================================
   void startCalibration();
-  // void stepCalibration();
   void saveCalibration(bool save = true);
   bool loadCalibration();
   void resetCalibration();
+  
+// ============================================================
+// ⏱️ Auto-save calibration variables
+// ============================================================
+  bool isCalibSaved() {return calibSaved;}
+  bool isCallibrated;
+  bool MaxMinChanged = false;
 
   void setDeadzoneUs(uint16_t dz) { deadzone_us_ = dz; }
 
 private:
-  // // Pocket (Mode 2) channel mapping:
-  // static constexpr uint8_t CH_ROLL     = 1;
-  // static constexpr uint8_t CH_PITCH    = 2;
-  // static constexpr uint8_t CH_THROTTLE = 3;
-  // static constexpr uint8_t CH_YAW      = 4;
-  // static constexpr uint8_t CH_SA       = 5;
-  // static constexpr uint8_t CH_SB       = 6;
-  // static constexpr uint8_t CH_SC       = 7;
-  // static constexpr uint8_t CH_SD       = 8;
-  // static constexpr uint8_t CH_SE       = 9;
-  // static constexpr uint8_t CH_S1       = 10;
-
+// ============================================================
+// 📦 RadioMaster Data Structures
+// ============================================================
   // ⏱️ Auto-save calibration variables
   unsigned long lastCalibChange = 0;
   const unsigned long CALIB_SAVE_DELAY = 3000;
@@ -107,6 +82,9 @@ private:
     bool unknown = true;
   };
 
+// ============================================================
+// 🔧 Utilities & helpers
+// ============================================================
   // helpers
   static inline uint16_t clampi(uint16_t v, uint16_t lo, uint16_t hi) {
     return (v < lo) ? lo : (v > hi) ? hi : v;
@@ -123,7 +101,7 @@ private:
   
   void updateMinMax(Analog& axis);
 
-  // void decodeSwitch (Button &v, uint16_t raw);
+  // 🧩 Decode switch helpers (with string return)
   void decodeSwitch (Button &v);
   // uint16_t scaleCentered(uint16_t raw, uint16_t min, uint16_t max) const;
   // uint16_t scaleLinear  (uint16_t raw, uint16_t min, uint16_t max) const;
@@ -137,9 +115,6 @@ private:
 
   Analog roll_, pitch_, throttle_, yaw_, s1_;
   Button sa_, sb_, sc_, sd_, se_;
-  // Sw2 sa_ = Sw2::Unknown, sd_ = Sw2::Unknown, se_ = Sw2::Unknown;
-  // Sw3 sb_ = Sw3::Unknown, sc_ = Sw3::Unknown;
-
   uint16_t lq_ = 0;
   bool     link_up_ = false;
   bool     cal_running_ = false;
