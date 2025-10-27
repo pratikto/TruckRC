@@ -113,9 +113,10 @@ uint16_t PocketMaster::min(uint8_t a) const {
 void PocketMaster::startCalibration() {
   cal_running_ = true;
   //init max and min value (is it needed??)
-  roll_.min = pitch_.min = throttle_.min = yaw_.min = s1_.min = 2000;
-  roll_.max = pitch_.max = throttle_.max = yaw_.max = s1_.max = 1000;
+  // roll_.min = pitch_.min = throttle_.min = yaw_.min = s1_.min = 2000;
+  // roll_.max = pitch_.max = throttle_.max = yaw_.max = s1_.max = 1000;
 
+  MaxMinChanged = false;
   updateMinMax(roll_);
   updateMinMax(pitch_);
   updateMinMax(throttle_);
@@ -184,53 +185,59 @@ bool PocketMaster::loadCalibration() {
 }
 
 void PocketMaster::updateMinMax(Analog& axis){//, uint16_t raw) {
-  MaxMinChanged = false;
-  uint16_t oldMin = axis.min;
-  uint16_t oldMax = axis.max;
-  if(axis.max < axis.raw){
-    axis.max = axis.raw;
-  }
-  if(axis.min > axis.raw){
-    axis.min = axis.raw;
-  }
+  // MaxMinChanged = false;
+  // uint16_t oldMin = axis.min;
+  // uint16_t oldMax = axis.max;
+  // if(axis.max > axis.raw){
+  //   axis.max = axis.raw;
+  //   MaxMinChanged = true;
+  // }
+  // if(axis.min < axis.raw){
+  //   axis.min = axis.raw;
+  //   MaxMinChanged = true;
+  // }
+
+  uint16_t oldMin = axis.min, oldMax = axis.max;
+  axis.max = assignMax(axis.max, axis.raw);
+  axis.min = assignMin(axis.min, axis.raw);
+  if (axis.min != oldMin || axis.max != oldMax) MaxMinChanged = true;
 }    
 
+// Centered axes (roll/pitch/yaw): map [min..mid]→[0..500], [mid..max]→[500..1000] with deadzone
 void PocketMaster::scaleCentered(Analog &axis) const{  
-  
-  uint16_t tempVal = axis.raw;
-
-  if (axis.max <= axis.min){
-     axis.val = 500;                  // not calibrated → neutral
+  // not calibrated → neutral
+  if (axis.max == axis.min) { 
+    axis.val = 500; 
+    return; 
   }
-  else{
-    uint16_t mid = (uint16_t)((axis.min + axis.max) / 2);
-    tempVal = (uint16_t)clampi((int)tempVal, (int)axis.min, (int)axis.max);
 
-    // Flat deadzone around mid returns exactly 500
-    if ((tempVal >= mid - deadzone_us_) && (tempVal <= mid + deadzone_us_)) 
-      axis.val = 500;
-    else{
-      uint16_t mid = (uint16_t)((axis.min + axis.max) / 2);
-      tempVal = (uint16_t)clampi((int)tempVal, (int)axis.min, (int)axis.max);
+  // range normalize and inverted flag
+  uint16_t lo = axis.min, hi = axis.max;
+  bool inverted = false;
+  if (lo > hi) { std::swap(lo, hi); inverted = true; }
 
-      // Flat deadzone around mid returns exactly 500
-      if ((tempVal >= mid - deadzone_us_) && (tempVal <= mid + deadzone_us_)) axis.val = 500;
+  // mid calculation range
+  uint16_t raw = (uint16_t)clampi((int)axis.raw, (int)lo, (int)hi);
+  uint16_t mid = (uint16_t)((lo + hi) / 2);
 
-      if (tempVal < mid - deadzone_us_) {
-        // Left side: 0..500
-        axis.val =  (uint16_t)imap((int)tempVal, (int)axis.min, (int)(mid - deadzone_us_), 0, 500);
-      } else {
-        // Right side: 500..1000
-        axis.val = (uint16_t)imap((int)tempVal, (int)(mid + deadzone_us_), (int)axis.max, 500, 1000);
-      }      
-    }
+  // 4) Deadzone configuration → 500
+  if (raw >= mid - deadzone_us_ && raw <= mid + deadzone_us_) {
+    axis.val = 500;
+    return;
   }
-};
 
+  // lef and right scaling
+  if (raw < mid - deadzone_us_) {
+    uint16_t v = (uint16_t)imap((int)raw, (int)lo, (int)(mid - deadzone_us_), 0, 500);
+    axis.val = inverted ? (uint16_t)(1000 - v) : v;
+  } else { // raw > mid + deadzone_us_
+    uint16_t v = (uint16_t)imap((int)raw, (int)(mid + deadzone_us_), (int)hi, 500, 1000);
+    axis.val = inverted ? (uint16_t)(1000 - v) : v;
+  }
+}
+
+// Linear axes (throttle, S1): map [min..max] → [0..1000]
 void PocketMaster::scaleLinear  (Analog &axis) const{
-  uint16_t tempVal = axis.raw;
-  if (axis.max <= axis.min)
-    axis.val = 0; // not calibrated
-  else
-    axis.val =(uint16_t)imap((int)tempVal, (int)axis.max, (int)axis.min, 0, 1000);
+  if (axis.max <= axis.min) axis.val = 0;                    // not calibrated
+  axis.val = (uint16_t)imap((int)axis.raw, (int)axis.min, (int)axis.max, 0, 1000);
 }

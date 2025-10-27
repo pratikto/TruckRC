@@ -94,7 +94,7 @@ void loop() {
       PocketRadio.isArmed = false;
       PocketRadio.startCalibration();
       if(PocketRadio.isCalibSaved()){
-        LOGI("CAL", "ROLL[min:%4u max:%4u] PITCH[min:%4u max:%4u] YAW[min:%4u max:%4u] THR[min:%4u max:%4u] S1[min:%4u max:%4u]",
+        LOGI("CAL", "ROLL[max:%4u min:%4u] PITCH[max:%4u min:%4u] YAW[max:%4u min:%4u] THR[max:%4u min:%4u] S1[max:%4u min:%4u]",
             PocketRadio.max(ROLL), PocketRadio.min(ROLL),
             PocketRadio.max(PITCH), PocketRadio.min(PITCH),
             PocketRadio.max(YAW), PocketRadio.min(YAW),
@@ -132,17 +132,5 @@ void debugPrintChannels() {
        PocketRadio.val(SE),
        PocketRadio.val(S1)
       );
-  // LOGD("CRSF", "R:%4u P:%4u T:%4u Y:%4u | SA:%d SB:%d SC:%d SD:%d SE:%d | S1:%4u",
-  //      PocketRadio.raw(ROLL), 
-  //      PocketRadio.raw(PITCH), 
-  //      PocketRadio.raw(THROTTLE), 
-  //      PocketRadio.raw(YAW),
-  //      PocketRadio.raw(SA),
-  //      PocketRadio.raw(SB),
-  //      PocketRadio.raw(SC),
-  //      PocketRadio.raw(SD),
-  //      PocketRadio.raw(SE),
-  //      PocketRadio.raw(S1)
-  //     );
 #endif
 }
