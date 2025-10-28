@@ -4,6 +4,7 @@
 #include "Logger.h"
 #include "PocketMaster.h"
 #include "DualTB6612.h"
+#include "PFServo.h"
 
 // 🔹 [ADDED for Bluetooth logging]
 #include <BluetoothSerial.h>
@@ -16,34 +17,40 @@ Print* LOG_OUT2 = nullptr;   // set later to &BT in setup()
 // ============================================================
 // ⚙️ Hardware setup
 // ============================================================
-#define PIN_RX 16
-#define PIN_TX 17
-#define LED_PIN 2   // ✅ ESP32 DevKitC v4 onboard LED
+constexpr int PIN_RX = 16;
+constexpr int PIN_TX = 17;
+constexpr int LED_PIN = 2;   // ✅ ESP32 DevKitC v4 onboard LED
 
-// === Mapping PIN sesuai skematik ===
-// STBY_DRIVER_XL -> masukkan nomor GPIO yang kamu pakai
-constexpr int PIN_STBY = 19; // contoh: GPIO19 (ubah sesuai board)
+// Standby control for TB6612 driver
+constexpr int PIN_STBY = 23;   // STBY_DRIVER_XL -> enable pin for H-bridge
 
-// Kanal A (XL1): DIR1_XL_1, DIR2_XL_1, PWM_BUFF_XL_1
-constexpr int PIN_AIN1 = 2;   // contoh GPIO2
-constexpr int PIN_AIN2 = 3;   // contoh GPIO3
-constexpr int PIN_PWMA = 4;   // contoh GPIO4 (masuk 74HCT14 -> PWM_BUFF_XL_1)
+// Channel A (XL1): DIR1_XL_1, DIR2_XL_1, PWM_BUFF_XL_1
+constexpr int PIN_AIN1 = 18;   // Direction A1
+constexpr int PIN_AIN2 = 19;   // Direction A2
+constexpr int PIN_PWMA = 25;   // PWM output for motor A (goes through 74HCT14 buffer)
 
-// Kanal B (XL2): DIR1_XL_2, DIR2_XL_2, PWM_BUFF_XL_2
-constexpr int PIN_BIN1 = 5;   // contoh GPIO5
-constexpr int PIN_BIN2 = 6;   // contoh GPIO6
-constexpr int PIN_PWMB = 7;   // contoh GPIO7 (masuk 74HCT14 -> PWM_BUFF_XL_2)
+// Channel B (XL2): DIR1_XL_2, DIR2_XL_2, PWM_BUFF_XL_2
+constexpr int PIN_BIN1 = 32;   // Direction B1
+constexpr int PIN_BIN2 = 33;   // Direction B2
+constexpr int PIN_PWMB = 26;   // PWM output for motor B (goes through 74HCT14 buffer)
 
-// LEDC channel index (0..7 di ESP32-C3)
-constexpr int CH_PWMA = 0;
-constexpr int CH_PWMB = 1;
+// Servo PF output (through 74HCT14 buffer)
+constexpr int PIN_SERVO = 27;  // PWM output for LEGO Power Functions servo
+
+// LEDC PWM channel indexes (0–7 on ESP32)
+constexpr int CH_PWMA  = 0;    // PWM channel for motor A
+constexpr int CH_PWMB  = 1;    // PWM channel for motor B
+constexpr int CH_SERVO = 2;    // PWM channel for servo
+
 
 DualTB6612::ChannelPins chA{PIN_AIN1, PIN_AIN2, PIN_PWMA, CH_PWMA};
 DualTB6612::ChannelPins chB{PIN_BIN1, PIN_BIN2, PIN_PWMB, CH_PWMB};
 
-// 20kHz, 10-bit, zeroMode=Brake
-DualTB6612 motors(PIN_STBY, chA, chB, 20000, 10, ZeroMode::Brake);
-
+// ============================================================
+// Class initialization
+// ============================================================
+DualTB6612 motors(PIN_STBY, chA, chB, 20000, 10, ZeroMode::Brake); // 20kHz, 10-bit, zeroMode=Brake
+PFServo steering(PIN_SERVO, CH_SERVO); // channel 2
 HardwareSerial crsfSerial(1);
 AlfredoCRSF crsf;
 PocketMaster PocketRadio(crsf);
@@ -91,6 +98,16 @@ void setup() {
       digitalWrite(LED_PIN, LOW); delay(150);
     }
   }
+
+  steering.begin();
+  steering.setInput(0);
+
+  motors.begin();            // configure pins, LEDC, and leave standby
+  motors.setZeroMode(ZeroMode::Brake); // 0-speed = active brake
+
+  // Soft start to reduce inrush
+  motors.rampToA(+400, 3);   // A to +40% with 3 ms per step
+  motors.rampToB(+400, 3);
 }
 
 // ============================================================
@@ -114,6 +131,8 @@ void loop() {
       //Throtle used for controlling motor speed 
       motors.setSpeedA(PocketRadio.val(THROTTLE));
       motors.setSpeedB(PocketRadio.val(THROTTLE));
+      // roll used for controlling
+      steering.setInput(PocketRadio.val(ROLL));
     }
     //enter Callibration mode when SA is down 
     else if (PocketRadio.val(SA) == 3) {
@@ -140,8 +159,19 @@ void loop() {
       LOGI("CRSF", "Receiver disconnected");
     }
     // PocketRadio.throttle.val = 0;
-  }
+    // Stop (brake)
+    motors.setSpeedA(0);
+    motors.setSpeedB(0);
+    delay(800);
 
+    // Coast, then standby
+    motors.coastA();
+    motors.coastB();
+    delay(500);
+    motors.standby(true);      // low-power mode (H-bridge off)
+    delay(500);
+    motors.standby(false);     // wake
+  }
   // updateLED();
   delay(10);
 }
