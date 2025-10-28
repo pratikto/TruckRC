@@ -3,6 +3,7 @@
 #include <HardwareSerial.h>
 #include "Logger.h"
 #include "PocketMaster.h"
+#include "DualTB6612.h"
 
 // 🔹 [ADDED for Bluetooth logging]
 #include <BluetoothSerial.h>
@@ -18,6 +19,30 @@ Print* LOG_OUT2 = nullptr;   // set later to &BT in setup()
 #define PIN_RX 16
 #define PIN_TX 17
 #define LED_PIN 2   // ✅ ESP32 DevKitC v4 onboard LED
+
+// === Mapping PIN sesuai skematik ===
+// STBY_DRIVER_XL -> masukkan nomor GPIO yang kamu pakai
+constexpr int PIN_STBY = 19; // contoh: GPIO19 (ubah sesuai board)
+
+// Kanal A (XL1): DIR1_XL_1, DIR2_XL_1, PWM_BUFF_XL_1
+constexpr int PIN_AIN1 = 2;   // contoh GPIO2
+constexpr int PIN_AIN2 = 3;   // contoh GPIO3
+constexpr int PIN_PWMA = 4;   // contoh GPIO4 (masuk 74HCT14 -> PWM_BUFF_XL_1)
+
+// Kanal B (XL2): DIR1_XL_2, DIR2_XL_2, PWM_BUFF_XL_2
+constexpr int PIN_BIN1 = 5;   // contoh GPIO5
+constexpr int PIN_BIN2 = 6;   // contoh GPIO6
+constexpr int PIN_PWMB = 7;   // contoh GPIO7 (masuk 74HCT14 -> PWM_BUFF_XL_2)
+
+// LEDC channel index (0..7 di ESP32-C3)
+constexpr int CH_PWMA = 0;
+constexpr int CH_PWMB = 1;
+
+DualTB6612::ChannelPins chA{PIN_AIN1, PIN_AIN2, PIN_PWMA, CH_PWMA};
+DualTB6612::ChannelPins chB{PIN_BIN1, PIN_BIN2, PIN_PWMB, CH_PWMB};
+
+// 20kHz, 10-bit, zeroMode=Brake
+DualTB6612 motors(PIN_STBY, chA, chB, 20000, 10, ZeroMode::Brake);
 
 HardwareSerial crsfSerial(1);
 AlfredoCRSF crsf;
@@ -86,6 +111,9 @@ void loop() {
           PocketRadio.loadCalibration();
       }
       debugPrintChannels();
+      //Throtle used for controlling motor speed 
+      motors.setSpeedA(PocketRadio.val(THROTTLE));
+      motors.setSpeedB(PocketRadio.val(THROTTLE));
     }
     //enter Callibration mode when SA is down 
     else if (PocketRadio.val(SA) == 3) {
