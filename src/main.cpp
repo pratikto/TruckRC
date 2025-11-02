@@ -7,19 +7,19 @@
 #include "PFServo.h"
 
 // 🔹 [ADDED for Bluetooth logging]
-#include <BluetoothSerial.h>
-BluetoothSerial BT;
+// #include <BluetoothSerial.h>
+// BluetoothSerial BT;
 
 // 🔹 define logger sinks (multi-output)
 Print* LOG_OUT1 = &Serial;
-Print* LOG_OUT2 = nullptr;   // set later to &BT in setup()
+// Print* LOG_OUT2 = nullptr;   // set later to &BT in setup()
 
 // ============================================================
 // ⚙️ Hardware setup
 // ============================================================
-constexpr int PIN_RX = 16;
-constexpr int PIN_TX = 17;
-constexpr int LED_PIN = 2;   // ✅ ESP32 DevKitC v4 onboard LED
+#define PIN_TX 20
+#define PIN_RX 21
+#define PIN_LED 8   // ✅ ESP32-C3 Super Mini onboard LED
 
 // Standby control for TB6612 driver
 constexpr int PIN_STBY = 23;   // STBY_DRIVER_XL -> enable pin for H-bridge
@@ -73,12 +73,12 @@ void setup() {
 #endif
 
   // 🔹 [ADDED for Bluetooth logging]
-  BT.begin("ESP32-Logger");    // start Bluetooth SPP
-  LOG_OUT2 = &BT;              // send all logs to BT too
+  // BT.begin("ESP32-Logger");    // start Bluetooth SPP
+  // LOG_OUT2 = &BT;              // send all logs to BT too
   LOGI("BOOT", "Bluetooth SPP ready (ESP32-Logger)");
 
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
+  pinMode(PIN_LED, OUTPUT);
+  digitalWrite(PIN_LED, LOW);
 
   crsfSerial.begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_RX, PIN_TX);
   crsf.begin(crsfSerial);
@@ -94,8 +94,8 @@ void setup() {
   if (PocketRadio.isCallibrated) {
     LOGI("LED", "Calibration found → Blink 3x");
     for (int i = 0; i < 3; i++) {
-      digitalWrite(LED_PIN, HIGH); delay(150);
-      digitalWrite(LED_PIN, LOW); delay(150);
+      digitalWrite(PIN_LED, HIGH); delay(150);
+      digitalWrite(PIN_LED, LOW); delay(150);
     }
   }
 
@@ -173,7 +173,7 @@ void loop() {
     motors.standby(false);     // wake
   }
   // updateLED();
-  delay(10);
+  delayMicroseconds(500);
 }
 
 void debugPrintChannels() {
