@@ -47,7 +47,7 @@ static inline const char* __ts(char* buf, size_t n) {
 
 // ===== Multi-sink support (Serial + Bluetooth or others) =====
 extern Print* LOG_OUT1;   // define in main.cpp, e.g. &Serial
-extern Print* LOG_OUT2;   // optional second sink, e.g. &BluetoothSerial
+// extern Print* LOG_OUT2;   // optional second sink, e.g. &BluetoothSerial
 
 // Core print enable
 #ifdef DEBUG
@@ -66,7 +66,7 @@ extern Print* LOG_OUT2;   // optional second sink, e.g. &BluetoothSerial
                        ##__VA_ARGS__, C_RST);                                         \
     if (__n < 0) break;                                                               \
     if (LOG_OUT1) LOG_OUT1->write((const uint8_t*)__buf, (size_t)min(__n, (int)sizeof(__buf)-1)); \
-    if (LOG_OUT2) LOG_OUT2->write((const uint8_t*)__buf, (size_t)min(__n, (int)sizeof(__buf)-1)); \
+    /* if (LOG_OUT2) LOG_OUT2->write((const uint8_t*)__buf, (size_t)min(__n, (int)sizeof(__buf)-1));*/ \
   } while(0)
 #else
   #define __LOG_LINE(color, lvlstr, tag, fmt, ...) do {} while(0)
