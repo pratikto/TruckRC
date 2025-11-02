@@ -9,9 +9,9 @@
   static constexpr uint8_t THROTTLE = 2;
   static constexpr uint8_t YAW      = 3;
   static constexpr uint8_t SA       = 4;
-  static constexpr uint8_t SB       = 5;
-  static constexpr uint8_t SC       = 6;
-  static constexpr uint8_t SD       = 7;
+  static constexpr uint8_t SD       = 5;
+  static constexpr uint8_t SB       = 6;
+  static constexpr uint8_t SC       = 7;
   static constexpr uint8_t SE       = 8;
   static constexpr uint8_t S1       = 9; 
 
