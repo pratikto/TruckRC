@@ -17,8 +17,8 @@ Print* LOG_OUT1 = &Serial;
 // ============================================================
 // ⚙️ Hardware setup
 // ============================================================
-#define PIN_RX 20
-#define PIN_TX 21
+#define PIN_RX 21
+#define PIN_TX 20
 #define PIN_LED 8   // ✅ ESP32-C3 Super Mini onboard LED
 
 // Standby control for TB6612 driver
@@ -172,10 +172,6 @@ void loop() {
     // motors.standby(false);     // wake
   }
   // updateLED();
-  while (crsfSerial.available()) {
-  int b = crsfSerial.read();
-  Serial.printf("[CRSF RX] %02X ", b);
-  }
   delay(10);
 }
 
