@@ -3,8 +3,10 @@
 static inline int clampPct(int v){ if(v>100) return 100; if(v<-100) return -100; return v; }
 
 void DualTB6612::begin() {
-  pinMode(_stby, OUTPUT);
-  digitalWrite(_stby, HIGH); // keluar standby
+  if(_stby >= 0){
+    pinMode(_stby, OUTPUT);
+    digitalWrite(_stby, HIGH); // keluar standby
+  }
 
   pinMode(_chA.in1, OUTPUT); pinMode(_chA.in2, OUTPUT);
   pinMode(_chB.in1, OUTPUT); pinMode(_chB.in2, OUTPUT);
@@ -71,8 +73,12 @@ void DualTB6612::coastA(){ _spdA = 0; doCoast(_chA); }
 void DualTB6612::coastB(){ _spdB = 0; doCoast(_chB); }
 
 void DualTB6612::standby(bool enable){
-  digitalWrite(_stby, enable ? LOW : HIGH); // STBY low = sleep
-  if (enable) { ledcWrite(_chA.pwmChan, 0); ledcWrite(_chB.pwmChan, 0); }
+  if (_stby < 0) return;             // standby pin is pullup
+  digitalWrite(_stby, enable ? LOW : HIGH);
+  if (enable) { 
+    ledcWrite(_chA.pwmChan, 0); 
+    ledcWrite(_chB.pwmChan, 0); 
+  }
 }
 
 void DualTB6612::rampToA(int targetPct, uint16_t stepDelayMs){

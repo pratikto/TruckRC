@@ -13,6 +13,7 @@ public:
         int pwmChan;  // LEDC channel index (0..7 di C3)
     };
 
+    //with standby pin connenected to ESP32
     DualTB6612(int pinSTBY,
                 ChannelPins chA,
                 ChannelPins chB,
@@ -23,6 +24,15 @@ public:
         _freq(pwmFreqHz), _bits(pwmBits), _zeroMode(zeroMode) {}
 
     void begin();
+
+    //standby pin is pullup 
+    DualTB6612(ChannelPins chA,
+               ChannelPins chB,
+               uint32_t pwmFreqHz = 20000,
+               uint8_t pwmBits = 10,
+               ZeroMode zeroMode = ZeroMode::Brake)
+    : _stby(-1), _chA(chA), _chB(chB),
+      _freq(pwmFreqHz), _bits(pwmBits), _zeroMode(zeroMode) {}
 
     // speed: -1000..+1000 (0 = stop)
     void setSpeedA(int speed);  
