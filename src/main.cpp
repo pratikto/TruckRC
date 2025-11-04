@@ -17,25 +17,25 @@ Print* LOG_OUT1 = &Serial;
 // ============================================================
 // ⚙️ Hardware setup
 // ============================================================
-#define PIN_TX 20
-#define PIN_RX 21
+#define PIN_RX 20
+#define PIN_TX 21
 #define PIN_LED 8   // ✅ ESP32-C3 Super Mini onboard LED
 
 // Standby control for TB6612 driver
-constexpr int PIN_STBY = 23;   // STBY_DRIVER_XL -> enable pin for H-bridge
+constexpr int PIN_STBY = -1;   // STBY_DRIVER_XL -> enable pin for H-bridge
 
 // Channel A (XL1): DIR1_XL_1, DIR2_XL_1, PWM_BUFF_XL_1
-constexpr int PIN_AIN1 = 18;   // Direction A1
-constexpr int PIN_AIN2 = 19;   // Direction A2
-constexpr int PIN_PWMA = 25;   // PWM output for motor A (goes through 74HCT14 buffer)
+constexpr int PIN_AIN1 = 1;   // Direction A1
+constexpr int PIN_AIN2 = 0;   // Direction A2
+constexpr int PIN_PWMA = 7;   // PWM output for motor A (goes through 74HCT14 buffer)
 
 // Channel B (XL2): DIR1_XL_2, DIR2_XL_2, PWM_BUFF_XL_2
-constexpr int PIN_BIN1 = 32;   // Direction B1
-constexpr int PIN_BIN2 = 33;   // Direction B2
-constexpr int PIN_PWMB = 26;   // PWM output for motor B (goes through 74HCT14 buffer)
+constexpr int PIN_BIN1 = 2;   // Direction B1
+constexpr int PIN_BIN2 = 3;   // Direction B2
+constexpr int PIN_PWMB = 6;   // PWM output for motor B (goes through 74HCT14 buffer)
 
 // Servo PF output (through 74HCT14 buffer)
-constexpr int PIN_SERVO = 27;  // PWM output for LEGO Power Functions servo
+constexpr int PIN_SERVO = 10;  // PWM output for LEGO Power Functions servo
 
 // LEDC PWM channel indexes (0–7 on ESP32)
 constexpr int CH_PWMA  = 0;    // PWM channel for motor A
@@ -66,11 +66,10 @@ void updateLED();
 // ============================================================
 void setup() {
   Serial.begin(115200);
-#if defined(DEBUG)
+  
   unsigned long t0 = millis();
-  while (!Serial && (millis() - t0 < 1500)) {}
+  while (!Serial && (millis() - t0 < 1500)) {delay(10);}
   LOGI("BOOT", "Serial ready. Starting CRSF...");
-#endif
 
   // 🔹 [ADDED for Bluetooth logging]
   // BT.begin("ESP32-Logger");    // start Bluetooth SPP
@@ -168,12 +167,16 @@ void loop() {
     motors.coastA();
     motors.coastB();
     delay(500);
-    motors.standby(true);      // low-power mode (H-bridge off)
+    // motors.standby(true);      // low-power mode (H-bridge off)
     delay(500);
-    motors.standby(false);     // wake
+    // motors.standby(false);     // wake
   }
   // updateLED();
-  delayMicroseconds(500);
+  while (crsfSerial.available()) {
+  int b = crsfSerial.read();
+  Serial.printf("[CRSF RX] %02X ", b);
+  }
+  delay(10);
 }
 
 void debugPrintChannels() {
