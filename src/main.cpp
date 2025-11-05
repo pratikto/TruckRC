@@ -17,34 +17,42 @@ Print* LOG_OUT1 = &Serial;
 // ============================================================
 // ⚙️ Hardware setup
 // ============================================================
-#define PIN_RX 21
-#define PIN_TX 20
-#define PIN_LED 8   // ✅ ESP32-C3 Super Mini onboard LED
+//Serial communication pin out
+constexpr int PIN_RX = 21;
+constexpr int PIN_TX = 20;
+
+//I2C communication pin out
+constexpr int PIN_SDA = 8;
+constexpr int PIN_SCL = 9;
 
 // Standby control for TB6612 driver
 constexpr int PIN_STBY = -1;   // STBY_DRIVER_XL -> enable pin for H-bridge
 
 // Channel A (XL1): DIR1_XL_1, DIR2_XL_1, PWM_BUFF_XL_1
-constexpr int PIN_AIN1 = 1;   // Direction A1
-constexpr int PIN_AIN2 = 0;   // Direction A2
-constexpr int PIN_PWMA = 7;   // PWM output for motor A (goes through 74HCT14 buffer)
+constexpr int PIN_DIR1_XL1 = 1;   // Direction A1
+constexpr int PIN_DIR2_XL1 = 0;   // Direction A2
+constexpr int PIN_PWM_XL1  = 7;   // PWM output for motor A (goes through 74HCT14 buffer)
 
 // Channel B (XL2): DIR1_XL_2, DIR2_XL_2, PWM_BUFF_XL_2
-constexpr int PIN_BIN1 = 2;   // Direction B1
-constexpr int PIN_BIN2 = 3;   // Direction B2
-constexpr int PIN_PWMB = 6;   // PWM output for motor B (goes through 74HCT14 buffer)
+constexpr int PIN_DIR1_XL2 = 2;   // Direction B1
+constexpr int PIN_DIR2_XL2 = 3;   // Direction B2
+constexpr int PIN_PWM_XL2  = 6;   // PWM output for motor B (goes through 74HCT14 buffer)
+
+// for L motor
+constexpr int PIN_DIR1_L = 5;   // Direction B1
+constexpr int PIN_DIR2_L = 4;   // Direction B2
 
 // Servo PF output (through 74HCT14 buffer)
 constexpr int PIN_SERVO = 10;  // PWM output for LEGO Power Functions servo
 
 // LEDC PWM channel indexes (0–7 on ESP32)
-constexpr int CH_PWMA  = 0;    // PWM channel for motor A
-constexpr int CH_PWMB  = 1;    // PWM channel for motor B
-constexpr int CH_SERVO = 2;    // PWM channel for servo
+constexpr int CH_PWM_XL1  = 0;    // PWM channel for motor A
+constexpr int CH_PWM_XL2  = 1;    // PWM channel for motor B
+constexpr int CH_SERVO    = 2;    // PWM channel for servo
 
 
-DualTB6612::ChannelPins chA{PIN_AIN1, PIN_AIN2, PIN_PWMA, CH_PWMA};
-DualTB6612::ChannelPins chB{PIN_BIN1, PIN_BIN2, PIN_PWMB, CH_PWMB};
+DualTB6612::ChannelPins chA{PIN_DIR1_XL1, PIN_DIR2_XL1, PIN_PWM_XL1, CH_PWM_XL1};
+DualTB6612::ChannelPins chB{PIN_DIR1_XL2, PIN_DIR2_XL2, PIN_PWM_XL2, CH_PWM_XL2};
 
 // ============================================================
 // Class initialization
@@ -58,8 +66,7 @@ PocketMaster PocketRadio(crsf);
 // ============================================================
 // 🧠 Function Prototypes
 // ============================================================
-void debugPrintChannels();
-void updateLED();
+void debugPrintChannels();         
 
 // ============================================================
 // 🚀 Setup
@@ -76,9 +83,6 @@ void setup() {
   // LOG_OUT2 = &BT;              // send all logs to BT too
   LOGI("BOOT", "Bluetooth SPP ready (ESP32-Logger)");
 
-  pinMode(PIN_LED, OUTPUT);
-  digitalWrite(PIN_LED, LOW);
-
   crsfSerial.begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_RX, PIN_TX);
   crsf.begin(crsfSerial);
   LOGI("CRSF", "UART1 @ %d baud (RX=%d TX=%d)", (int)CRSF_BAUDRATE, PIN_RX, PIN_TX);
@@ -92,10 +96,6 @@ void setup() {
 
   if (PocketRadio.isCallibrated) {
     LOGI("LED", "Calibration found → Blink 3x");
-    for (int i = 0; i < 3; i++) {
-      digitalWrite(PIN_LED, HIGH); delay(150);
-      digitalWrite(PIN_LED, LOW); delay(150);
-    }
   }
 
   steering.begin();
@@ -171,7 +171,6 @@ void loop() {
     delay(500);
     // motors.standby(false);     // wake
   }
-  // updateLED();
   delay(10);
 }
 
