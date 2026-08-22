@@ -202,9 +202,7 @@ void setup() {
 
   motors.begin();
   motors.setZeroMode(ZeroMode::Brake);
-
-  motors.rampToA(+400, 3);
-  motors.rampToB(+400, 3);
+  // Safety: remain braked at boot until CRSF is linked and SA is armed.
 
   startWiFi();
 }
@@ -229,7 +227,8 @@ void loop() {
       debugPrintChannels();
       motors.setSpeedA(PocketRadio.val(THROTTLE));
       motors.setSpeedB(PocketRadio.val(THROTTLE));
-      steering.setInput(PocketRadio.val(ROLL));
+      const int steeringInput = ((int)PocketRadio.val(ROLL) - 500) * 2;
+      steering.setInput(steeringInput);
     } else if (PocketRadio.val(SA) == 3) {
       if (PocketRadio.isArmed) {
         LOGI("RC", "SA DOWN -> system disarmed, entering calibration mode");
