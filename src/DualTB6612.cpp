@@ -11,7 +11,6 @@ void DualTB6612::begin() {
   pinMode(_chA.in1, OUTPUT); pinMode(_chA.in2, OUTPUT);
   pinMode(_chB.in1, OUTPUT); pinMode(_chB.in2, OUTPUT);
 
-  // LEDC config per channel
   cfgPwm(_chA);
   cfgPwm(_chB);
 
@@ -20,11 +19,10 @@ void DualTB6612::begin() {
 }
 
 void DualTB6612::cfgPwm(const ChannelPins& ch) {
-  // Timer dipilih otomatis berdasarkan channel (ESP32-C3: timer 0..3)
-  // Biar sederhana, semua channel pakai timer 0.
-  ledcSetup(ch.pwmChan, _freq, _bits);
-  ledcAttachPin(ch.pwm, ch.pwmChan);
-  ledcWrite(ch.pwmChan, 0);
+  // Arduino ESP32 3.x: attach GPIO to an explicit LEDC channel.
+  // Channels 0 and 1 share compatible motor PWM settings.
+  ledcAttachChannel(ch.pwm, _freq, _bits, ch.pwmChan);
+  ledcWriteChannel(ch.pwmChan, 0);
 }
 
 void DualTB6612::apply(int speed, const ChannelPins& ch) {
@@ -34,11 +32,11 @@ void DualTB6612::apply(int speed, const ChannelPins& ch) {
   if (speed > 0) {
     digitalWrite(ch.in1, HIGH);
     digitalWrite(ch.in2, LOW);
-    ledcWrite(ch.pwmChan, duty);
+    ledcWriteChannel(ch.pwmChan, duty);
   } else if (speed < 0) {
     digitalWrite(ch.in1, LOW);
     digitalWrite(ch.in2, HIGH);
-    ledcWrite(ch.pwmChan, duty);
+    ledcWriteChannel(ch.pwmChan, duty);
   } else {
     if (_zeroMode == ZeroMode::Brake) doBrake(ch);
     else doCoast(ch);
@@ -46,17 +44,15 @@ void DualTB6612::apply(int speed, const ChannelPins& ch) {
 }
 
 void DualTB6612::doBrake(const ChannelPins& ch) {
-  // fast decay (AIN1=AIN2=HIGH) + PWM duty 0
   digitalWrite(ch.in1, HIGH);
   digitalWrite(ch.in2, HIGH);
-  ledcWrite(ch.pwmChan, 0);
+  ledcWriteChannel(ch.pwmChan, 0);
 }
 
 void DualTB6612::doCoast(const ChannelPins& ch) {
-  // slow decay (AIN1=AIN2=LOW) + PWM duty 0
   digitalWrite(ch.in1, LOW);
   digitalWrite(ch.in2, LOW);
-  ledcWrite(ch.pwmChan, 0);
+  ledcWriteChannel(ch.pwmChan, 0);
 }
 
 void DualTB6612::setSpeedA(int speed) { _spdA = clampSpeed(speed); apply(_spdA, _chA); }
@@ -73,11 +69,11 @@ void DualTB6612::coastA(){ _spdA = 0; doCoast(_chA); }
 void DualTB6612::coastB(){ _spdB = 0; doCoast(_chB); }
 
 void DualTB6612::standby(bool enable){
-  if (_stby < 0) return;             // standby pin is pullup
+  if (_stby < 0) return;
   digitalWrite(_stby, enable ? LOW : HIGH);
-  if (enable) { 
-    ledcWrite(_chA.pwmChan, 0); 
-    ledcWrite(_chB.pwmChan, 0); 
+  if (enable) {
+    ledcWriteChannel(_chA.pwmChan, 0);
+    ledcWriteChannel(_chB.pwmChan, 0);
   }
 }
 
