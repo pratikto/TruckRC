@@ -42,8 +42,9 @@ static inline const char* __ts(char* buf, size_t n) {
   return buf;
 }
 
-// Implemented by main.cpp. It mirrors every log line to USB and,
-// when available, to WebSerial.
+// Diimplementasikan oleh main.cpp. Pemisahan ini membuat Logger tidak perlu
+// mengetahui detail Wi-Fi: Logger hanya membentuk teks, lalu main.cpp yang
+// menduplikasi teks tersebut ke USB Serial dan WebSerial.
 void writeLogLine(const char* line);
 
 #ifdef DEBUG
@@ -53,6 +54,8 @@ void writeLogLine(const char* line);
 #endif
 
 #if __LOG_ENABLED
+  // Satu baris log dibentuk dalam buffer tetap 256 byte agar tidak sering
+  // melakukan alokasi heap/dynamic String pada loop embedded.
   #define __LOG_LINE(color, lvlstr, tag, fmt, ...) do {                         \
     char __tbuf[16];                                                            \
     char __buf[256];                                                            \
