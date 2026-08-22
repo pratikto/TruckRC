@@ -1,8 +1,8 @@
 #include "DualTB6612.h"
 
 void DualTB6612::begin() {
-  // STBY bersifat opsional. Nilai -1 berarti pin STBY sudah ditarik HIGH
-  // oleh hardware sehingga tidak perlu dikontrol ESP32.
+  // STBY is optional. A value of -1 means hardware already pulls STBY high,
+  // so the ESP32 does not need to control it.
   if (_stby >= 0) {
     pinMode(_stby, OUTPUT);
     digitalWrite(_stby, HIGH);
@@ -16,32 +16,32 @@ void DualTB6612::begin() {
   cfgPwm(_chA);
   cfgPwm(_chB);
 
-  // Resolusi 10-bit menghasilkan duty maksimum (2^10)-1 = 1023.
+  // A 10-bit resolution produces a maximum duty value of (2^10)-1 = 1023.
   _maxDuty = (1 << _bits) - 1;
-  // Kondisi awal wajib aman: kedua channel berhenti dalam mode brake.
+  // Start in a safe state with both channels actively braked.
   brakeA();
   brakeB();
 }
 
 void DualTB6612::cfgPwm(const ChannelPins& ch) {
   // Arduino ESP32 3.x: attach GPIO to an explicit LEDC channel.
-  // API lama ledcSetup()/ledcAttachPin() sudah dihapus pada core 3.x.
+  // The legacy ledcSetup()/ledcAttachPin() API was removed in core 3.x.
   ledcAttachChannel(ch.pwm, _freq, _bits, ch.pwmChan);
   ledcWriteChannel(ch.pwmChan, 0);
 }
 
 void DualTB6612::apply(int speed, const ChannelPins& ch) {
-  // Command ternormalisasi -1000..+1000 dipetakan ke duty LEDC 0..1023.
+  // Map the normalized -1000..+1000 speed command to LEDC duty 0..1023.
   speed = clampSpeed(speed);
   const int duty = map(abs(speed), 0, 1000, 0, _maxDuty);
 
   if (speed > 0) {
-    // Polaritas arah maju: IN1=HIGH dan IN2=LOW.
+    // Forward polarity: IN1=HIGH and IN2=LOW.
     digitalWrite(ch.in1, HIGH);
     digitalWrite(ch.in2, LOW);
     ledcWriteChannel(ch.pwmChan, duty);
   } else if (speed < 0) {
-    // Polaritas dibalik untuk arah mundur.
+    // Reverse the input polarity for backward rotation.
     digitalWrite(ch.in1, LOW);
     digitalWrite(ch.in2, HIGH);
     ledcWriteChannel(ch.pwmChan, duty);
@@ -53,14 +53,14 @@ void DualTB6612::apply(int speed, const ChannelPins& ch) {
 }
 
 void DualTB6612::doBrake(const ChannelPins& ch) {
-  // Kedua input HIGH dengan PWM 0 menghasilkan active/short brake.
+  // Driving both inputs HIGH with zero PWM applies active/short braking.
   digitalWrite(ch.in1, HIGH);
   digitalWrite(ch.in2, HIGH);
   ledcWriteChannel(ch.pwmChan, 0);
 }
 
 void DualTB6612::doCoast(const ChannelPins& ch) {
-  // Kedua input LOW membuat output H-bridge bebas (motor coasting).
+  // Driving both inputs LOW releases the H-bridge so the motor can coast.
   digitalWrite(ch.in1, LOW);
   digitalWrite(ch.in2, LOW);
   ledcWriteChannel(ch.pwmChan, 0);
@@ -76,7 +76,7 @@ void DualTB6612::setSpeedB(int speed) {
   apply(_spdB, _chB);
 }
 
-// Helper persen dikalikan 10 karena API internal memakai skala 0..1000.
+// Convert percentage helpers to the driver's internal 0..1000 scale.
 void DualTB6612::forwardA(uint8_t pct) { setSpeedA(constrain(pct, 0, 100) * 10); }
 void DualTB6612::reverseA(uint8_t pct) { setSpeedA(-constrain(pct, 0, 100) * 10); }
 void DualTB6612::forwardB(uint8_t pct) { setSpeedB(constrain(pct, 0, 100) * 10); }
@@ -98,8 +98,8 @@ void DualTB6612::standby(bool enable) {
 }
 
 void DualTB6612::rampToA(int targetSpeed, uint16_t stepDelayMs) {
-  // Utility blocking ini cocok untuk bench test, tetapi jangan dipanggil
-  // berulang kali di loop utama karena delay akan memperlambat CRSF.
+  // This blocking helper is suitable for bench tests. Do not call it repeatedly
+  // from the main loop because its delays would reduce CRSF responsiveness.
   targetSpeed = clampSpeed(targetSpeed);
   int speed = _spdA;
   const int step = (targetSpeed >= speed) ? 1 : -1;
