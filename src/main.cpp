@@ -257,6 +257,13 @@ void loop() {
 
 void debugPrintChannels() {
 #if defined(DEBUG)
+  static unsigned long lastPrintMs = 0;
+  const unsigned long now = millis();
+
+  // Keep control updates fast, but limit browser/USB telemetry to 10 Hz.
+  if (now - lastPrintMs < 100UL) return;
+  lastPrintMs = now;
+
   LOGD("CRSF",
        "R:%4u P:%4u T:%4u Y:%4u | SA:%d SB:%d SC:%d SD:%d SE:%d | S1:%4u | LQ:%3u",
        PocketRadio.val(ROLL),
