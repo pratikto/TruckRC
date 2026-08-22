@@ -9,8 +9,8 @@ bool PocketMaster::begin(const char* nvs_ns) {
   return true;
 }
 
-  void PocketMaster::decodeSwitch(Button &v){//, uint16_t raw) {
-    // v.raw = raw;
+  void PocketMaster::decodeSwitch(Button &v){
+    // RadioMaster three-position switches are decoded from CRSF pulse widths.
     if (v.raw > 1800) {
       v.up = true; v.mid = false; v.down = false; v.unknown = false; v.val = 1;
     } else if (v.raw < 1200) {
@@ -18,7 +18,6 @@ bool PocketMaster::begin(const char* nvs_ns) {
     } else {
       v.up = false; v.mid = true; v.down = false; v.unknown = false; v.val = 2;
     }
-    // return state;
   };
 
 void PocketMaster::update() {
@@ -26,7 +25,7 @@ void PocketMaster::update() {
   link_up_ = crsf_.isLinkUp();
   if (!link_up_) return;
 
-  // read channels
+  // Read all 16 CRSF channels once so each control uses the same received frame.
   uint16_t ch[16];
   for (int i = 0; i < 16; i++) ch[i] = crsf_.getChannel(i + 1);
 
@@ -112,10 +111,9 @@ uint16_t PocketMaster::min(uint8_t a) const {
 
 void PocketMaster::startCalibration() {
   cal_running_ = true;
-  //init max and min value (is it needed??)
-  // roll_.min = pitch_.min = throttle_.min = yaw_.min = s1_.min = 2000;
-  // roll_.max = pitch_.max = throttle_.max = yaw_.max = s1_.max = 1000;
 
+  // Expand each stored minimum/maximum whenever the user moves a control
+  // beyond its previously observed calibration range.
   MaxMinChanged = false;
   updateMinMax(roll_);
   updateMinMax(pitch_);
@@ -129,25 +127,10 @@ void PocketMaster::startCalibration() {
   }
 
   if (!calibSaved && millis() - lastCalibChange > CALIB_SAVE_DELAY) {
-    // LOGI("CAL", "No changes → auto-saving calibration");
     saveCalibration(true);
     calibSaved = true;
   }
 }
-
-// void PocketMaster::stepCalibration() {
-//   if (!cal_running_) return;
-//   roll_.min     = min(roll_.min, roll_.raw);
-//   roll_.max     = max(roll_.max, roll_.raw);
-//   pitch_.min    = min(pitch_.min, pitch_.raw);
-//   pitch_.max    = max(pitch_.max, pitch_.raw);
-//   throttle_.min = min(throttle_.min, throttle_.raw);
-//   throttle_.max = max(throttle_.max, throttle_.raw);
-//   yaw_.min      = min(yaw_.min, yaw_.raw);
-//   yaw_.max      = max(yaw_.max, yaw_.raw);
-//   s1_.min       = min(s1_.min, s1_.raw);
-//   s1_.max       = max(s1_.max, s1_.raw);
-// }
 
 void PocketMaster::saveCalibration(bool save) {
   cal_running_ = false;
@@ -184,60 +167,52 @@ bool PocketMaster::loadCalibration() {
   return true;
 }
 
-void PocketMaster::updateMinMax(Analog& axis){//, uint16_t raw) {
-  // MaxMinChanged = false;
-  // uint16_t oldMin = axis.min;
-  // uint16_t oldMax = axis.max;
-  // if(axis.max > axis.raw){
-  //   axis.max = axis.raw;
-  //   MaxMinChanged = true;
-  // }
-  // if(axis.min < axis.raw){
-  //   axis.min = axis.raw;
-  //   MaxMinChanged = true;
-  // }
-
+void PocketMaster::updateMinMax(Analog& axis){
+  // Remember the old limits so startCalibration() knows whether the quiet
+  // auto-save timer must be restarted.
   uint16_t oldMin = axis.min, oldMax = axis.max;
   axis.max = assignMax(axis.max, axis.raw);
   axis.min = assignMin(axis.min, axis.raw);
   if (axis.min != oldMin || axis.max != oldMax) MaxMinChanged = true;
 }    
 
-// Centered axes (roll/pitch/yaw): map [min..mid]→[0..500], [mid..max]→[500..1000] with deadzone
+// Centered axes (roll/pitch/yaw) map [min..mid] to [0..500] and
+// [mid..max] to [500..1000], while preserving a neutral dead zone.
 void PocketMaster::scaleCentered(Analog &axis) const{  
-  // not calibrated → neutral
+  // Without a valid range, return the safe neutral value.
   if (axis.max == axis.min) { 
     axis.val = 500; 
     return; 
   }
 
-  // range normalize and inverted flag
+  // Normalize the limits and remember whether the axis is inverted.
   uint16_t lo = axis.min, hi = axis.max;
   bool inverted = false;
   if (lo > hi) { std::swap(lo, hi); inverted = true; }
 
-  // mid calculation range
+  // Clamp the raw input to the learned range and calculate its midpoint.
   uint16_t raw = (uint16_t)clampi((int)axis.raw, (int)lo, (int)hi);
   uint16_t mid = (uint16_t)((lo + hi) / 2);
 
-  // 4) Deadzone configuration → 500
+  // Any input inside the configured dead zone is exactly neutral (500).
   if (raw >= mid - deadzone_us_ && raw <= mid + deadzone_us_) {
     axis.val = 500;
     return;
   }
 
-  // lef and right scaling
+  // Scale the two sides separately so both endpoints retain full resolution.
   if (raw < mid - deadzone_us_) {
     uint16_t v = (uint16_t)imap((int)raw, (int)lo, (int)(mid - deadzone_us_), 0, 500);
     axis.val = inverted ? (uint16_t)(1000 - v) : v;
-  } else { // raw > mid + deadzone_us_
+  } else { // raw is above the upper edge of the dead zone.
     uint16_t v = (uint16_t)imap((int)raw, (int)(mid + deadzone_us_), (int)hi, 500, 1000);
     axis.val = inverted ? (uint16_t)(1000 - v) : v;
   }
 }
 
-// Linear axes (throttle, S1): map [min..max] → [0..1000]
+// Linear controls (throttle and S1) map [min..max] directly to [0..1000].
 void PocketMaster::scaleLinear  (Analog &axis) const{
-  if (axis.max <= axis.min) axis.val = 0;                    // not calibrated
+  // A missing/invalid calibration range produces the safe minimum output.
+  if (axis.max <= axis.min) axis.val = 0;
   axis.val = (uint16_t)imap((int)axis.raw, (int)axis.min, (int)axis.max, 0, 1000);
 }
