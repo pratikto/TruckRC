@@ -42,9 +42,8 @@ static inline const char* __ts(char* buf, size_t n) {
   return buf;
 }
 
-// Diimplementasikan oleh main.cpp. Pemisahan ini membuat Logger tidak perlu
-// mengetahui detail Wi-Fi: Logger hanya membentuk teks, lalu main.cpp yang
-// menduplikasi teks tersebut ke USB Serial dan WebSerial.
+// Implemented by main.cpp. This separation keeps Logger independent of Wi-Fi:
+// Logger formats the text, while main.cpp routes it to USB Serial and WebSerial.
 void writeLogLine(const char* line);
 
 #ifdef DEBUG
@@ -54,8 +53,8 @@ void writeLogLine(const char* line);
 #endif
 
 #if __LOG_ENABLED
-  // Satu baris log dibentuk dalam buffer tetap 256 byte agar tidak sering
-  // melakukan alokasi heap/dynamic String pada loop embedded.
+  // Format each line in a fixed 256-byte buffer to avoid repeated heap
+  // allocations and temporary String objects in the embedded control loop.
   #define __LOG_LINE(color, lvlstr, tag, fmt, ...) do {                         \
     char __tbuf[16];                                                            \
     char __buf[256];                                                            \
