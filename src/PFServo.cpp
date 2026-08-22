@@ -8,9 +8,9 @@ PFServo::PFServo(int pinServo, int ledcChannel,
 {}
 
 void PFServo::begin() {
-  ledcSetup(_ch, _freq, _resBits);
-  ledcAttachPin(_pin, _ch);
-  setAngle(90);  // posisi tengah saat mulai
+  // Arduino ESP32 3.x: attach the servo GPIO to its explicit channel.
+  ledcAttachChannel(_pin, _freq, _resBits, _ch);
+  setAngle(90);
 }
 
 void PFServo::setAngle(int angleDeg) {
@@ -24,14 +24,13 @@ void PFServo::setAngle(int angleDeg) {
 void PFServo::setInput(int value) {
   if (value > 1000) value = 1000;
   if (value < -1000) value = -1000;
-  // map ke 0–180
   int angleDeg = map(value, -1000, 1000, 0, 180);
   setAngle(angleDeg);
 }
 
 void PFServo::_applyUs(int us) {
-  // period 20 ms → 50 Hz
-  float dutyCycle = (float)us / 20000.0f;  // us ke rasio
+  // 50 Hz means a 20 ms period.
+  float dutyCycle = (float)us / 20000.0f;
   uint32_t duty = (uint32_t)(dutyCycle * ((1UL << _resBits) - 1));
-  ledcWrite(_ch, duty);
+  ledcWriteChannel(_ch, duty);
 }
