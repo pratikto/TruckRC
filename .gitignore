@@ -8,3 +8,5 @@
 
 # Local Wi-Fi credentials; never commit this file
 include/secrets.h
+
+*.json
