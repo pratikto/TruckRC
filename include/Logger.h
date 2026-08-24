@@ -15,13 +15,21 @@
   #define DEBUG_COLOR 1
 #endif
 
+/*
+ * ANSI color escape sequences for terminals that support colored output.
+ *
+ * Important:
+ * "\x1b" must contain a single backslash in the C++ source. The compiler
+ * converts it into the ESC control character (ASCII 27). Writing "\\x1b"
+ * would transmit the four visible characters "\x1b" instead.
+ */
 #if DEBUG_COLOR
-  #define C_RED     "\\x1b[31m"
-  #define C_YEL     "\\x1b[33m"
-  #define C_GRN     "\\x1b[32m"
-  #define C_CYN     "\\x1b[36m"
-  #define C_MAG     "\\x1b[35m"
-  #define C_RST     "\\x1b[0m"
+  #define C_RED     "\x1b[31m"
+  #define C_YEL     "\x1b[33m"
+  #define C_GRN     "\x1b[32m"
+  #define C_CYN     "\x1b[36m"
+  #define C_MAG     "\x1b[35m"
+  #define C_RST     "\x1b[0m"
 #else
   #define C_RED     ""
   #define C_YEL     ""
@@ -53,12 +61,17 @@ void writeLogLine(const char* line);
 #endif
 
 #if __LOG_ENABLED
-  // Format each line in a fixed 256-byte buffer to avoid repeated heap
-  // allocations and temporary String objects in the embedded control loop.
+  /*
+   * Format each line in a fixed 256-byte buffer to avoid repeated heap
+   * allocations and temporary String objects in the embedded control loop.
+   *
+   * "\r\n" is a real carriage-return/newline pair. It moves both the USB
+   * Serial Monitor and WebSerial cursor to the beginning of the next line.
+   */
   #define __LOG_LINE(color, lvlstr, tag, fmt, ...) do {                         \
     char __tbuf[16];                                                            \
     char __buf[256];                                                            \
-    int __n = snprintf(__buf, sizeof(__buf), "%s[%s][%s][%s] " fmt "%s\\r\\n", \
+    int __n = snprintf(__buf, sizeof(__buf), "%s[%s][%s][%s] " fmt "%s\r\n", \
                        color, __ts(__tbuf, sizeof(__tbuf)), lvlstr, tag,        \
                        ##__VA_ARGS__, C_RST);                                   \
     if (__n >= 0) writeLogLine(__buf);                                          \
