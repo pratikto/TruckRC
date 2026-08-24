@@ -93,13 +93,46 @@ void serviceWiFi();
 void resetFailsafe();
 void serviceFailsafe();
 
-// Every LOGx() macro eventually calls this function. USB Serial always
-// receives the line; WebSerial also receives it after the server has started.
+// Every LOGx() macro eventually calls this function.
+//
+// USB Serial receives the original line, including ANSI escape sequences, so
+// log levels remain color-coded in a compatible terminal such as PlatformIO.
+//
+// WebSerial receives a clean copy with ANSI sequences removed. Its browser UI
+// does not need to interpret terminal color-control bytes.
 void writeLogLine(const char* line) {
   Serial.print(line);
-  if (webSerialStarted) {
-    WebSerial.print(line);
+
+  if (!webSerialStarted) return;
+
+  char webLine[256];
+  size_t writeIndex = 0;
+  bool insideAnsiSequence = false;
+
+  for (size_t readIndex = 0;
+       line[readIndex] != '\0' && writeIndex < sizeof(webLine) - 1;
+       ++readIndex) {
+    const char current = line[readIndex];
+
+    // ANSI colors begin with ESC (ASCII 27), followed by characters such as
+    // "[32m". Skip everything from ESC through the terminating letter 'm'.
+    if (!insideAnsiSequence && current == '\x1b') {
+      insideAnsiSequence = true;
+      continue;
+    }
+
+    if (insideAnsiSequence) {
+      if (current == 'm') {
+        insideAnsiSequence = false;
+      }
+      continue;
+    }
+
+    webLine[writeIndex++] = current;
   }
+
+  webLine[writeIndex] = '\0';
+  WebSerial.print(webLine);
 }
 
 void startWiFi() {
