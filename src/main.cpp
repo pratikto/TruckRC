@@ -73,8 +73,22 @@ AsyncWebServer server(80);
 // The web server starts only once, after the ESP32 first obtains an IP address.
 bool webSerialStarted = false;
 bool wifiEnabled = false;
-wl_status_t previousWiFiStatus = WL_IDLE_STATUS;
-unsigned long lastWiFiAttemptMs = 0;
+
+// Wi-Fi connection is managed explicitly instead of mixing WiFi.reconnect()
+// with an active WiFi.begin() attempt. This prevents the ESP-IDF warning:
+// "wifi:sta is connecting, return error".
+enum class WiFiConnectionStage : uint8_t {
+  Disabled,
+  Connecting,
+  WaitingToRetry,
+  Connected
+};
+
+WiFiConnectionStage wifiStage = WiFiConnectionStage::Disabled;
+unsigned long wifiStageStartedMs = 0;
+
+constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 30000UL;
+constexpr unsigned long WIFI_RETRY_DELAY_MS = 3000UL;
 
 // This state machine replaces the previous delay-based failsafe sequence.
 // Using millis() keeps CRSF reception and Wi-Fi servicing responsive.
@@ -140,6 +154,7 @@ void startWiFi() {
   wifiEnabled = WIFI_SSID[0] != '\0';
 
   if (!wifiEnabled) {
+    wifiStage = WiFiConnectionStage::Disabled;
     LOGW("WIFI", "Disabled: copy secrets.example.h to include/secrets.h and fill credentials");
     return;
   }
@@ -147,23 +162,32 @@ void startWiFi() {
   WiFi.mode(WIFI_STA);
   // Station mode joins the existing IndiHome router instead of creating
   // a separate ESP32 access point.
-  WiFi.setAutoReconnect(true);
+  //
+  // Automatic reconnect is disabled because this application uses the
+  // non-blocking state machine below. Having both mechanisms active can cause
+  // two connection attempts to overlap.
+  WiFi.setAutoReconnect(false);
   // Avoid repeatedly writing Wi-Fi configuration to internal flash.
   WiFi.persistent(false);
+
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  lastWiFiAttemptMs = millis();
+  wifiStage = WiFiConnectionStage::Connecting;
+  wifiStageStartedMs = millis();
 
   LOGI("WIFI", "Connecting to %s...", WIFI_SSID);
 }
 
 void serviceWiFi() {
-  // This function is called every loop and never blocks while waiting for Wi-Fi.
+  // This function is called every loop and never blocks the CRSF control path.
   if (!wifiEnabled) return;
 
+  const unsigned long now = millis();
   const wl_status_t status = WiFi.status();
 
   if (status == WL_CONNECTED) {
-    if (previousWiFiStatus != WL_CONNECTED) {
+    if (wifiStage != WiFiConnectionStage::Connected) {
+      wifiStage = WiFiConnectionStage::Connected;
+      wifiStageStartedMs = now;
       LOGI("WIFI", "Connected. IP: %s", WiFi.localIP().toString().c_str());
 
       if (!webSerialStarted) {
@@ -175,18 +199,41 @@ void serviceWiFi() {
       }
     }
   } else {
-    if (previousWiFiStatus == WL_CONNECTED) {
-      LOGW("WIFI", "Connection lost; retrying in background");
-    }
+    switch (wifiStage) {
+      case WiFiConnectionStage::Connected:
+        // A previously working connection was lost. Stop the old attempt and
+        // wait briefly before starting a fresh one.
+        LOGW("WIFI", "Connection lost; retrying in background");
+        WiFi.disconnect(false, false);
+        wifiStage = WiFiConnectionStage::WaitingToRetry;
+        wifiStageStartedMs = now;
+        break;
 
-    if (millis() - lastWiFiAttemptMs >= 10000UL) {
-      // Limit reconnection attempts to once every 10 seconds.
-      lastWiFiAttemptMs = millis();
-      WiFi.reconnect();
+      case WiFiConnectionStage::Connecting:
+        // Give association, authentication, and DHCP enough time to finish.
+        // Do not call reconnect() while this attempt is still active.
+        if (now - wifiStageStartedMs >= WIFI_CONNECT_TIMEOUT_MS) {
+          LOGW("WIFI", "Connection timed out (status=%d); retrying in %lu ms",
+               static_cast<int>(status), WIFI_RETRY_DELAY_MS);
+          WiFi.disconnect(false, false);
+          wifiStage = WiFiConnectionStage::WaitingToRetry;
+          wifiStageStartedMs = now;
+        }
+        break;
+
+      case WiFiConnectionStage::WaitingToRetry:
+        if (now - wifiStageStartedMs >= WIFI_RETRY_DELAY_MS) {
+          LOGI("WIFI", "Starting a new connection attempt...");
+          WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+          wifiStage = WiFiConnectionStage::Connecting;
+          wifiStageStartedMs = now;
+        }
+        break;
+
+      case WiFiConnectionStage::Disabled:
+        break;
     }
   }
-
-  previousWiFiStatus = status;
 
   if (webSerialStarted) {
     // Perform WebSocket client cleanup and periodically flush buffered logs.
