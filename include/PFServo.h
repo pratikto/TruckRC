@@ -3,12 +3,13 @@
 
 /**
  * PFServo class
- * Kontrol LEGO Power Functions Servo melalui output PWM buffered 5V (74HCT14)
- * Kompatibel ESP32/ESP32-C3 (LEDC PWM)
+ * Drives a LEGO Power Functions servo through a 5 V buffered PWM output
+ * provided by the 74HCT14. Compatible with ESP32/ESP32-C3 LEDC PWM.
  *
- * - Input sudut 0–180° atau input analog -1000..+1000
- * - Frekuensi default 50 Hz (servo standar)
- * - Resolusi default 16-bit (65535)
+ * - Accepts either an angle of 0..180 degrees or normalized RC input
+ *   in the range -1000..+1000.
+ * - Default frequency: 50 Hz (standard servo timing).
+ * - Default resolution: 16-bit (duty range 0..65535).
  */
 
 class PFServo {
@@ -19,14 +20,14 @@ public:
 
   void begin();
   
-  // Set posisi servo dalam derajat (0–180)
+  // Set the servo position in degrees (0..180).
   void setAngle(int angleDeg);
 
-  // Set posisi dari input analog -1000..+1000
-  // -1000 = full kiri, 0 = tengah, +1000 = full kanan
+  // Set the servo position from normalized RC input.
+  // -1000=full left, 0=center, +1000=full right.
   void setInput(int value);
 
-  // Dapatkan posisi terakhir
+  // Return the last commanded angle in degrees.
   int getAngle() const { return _angle; }
 
 private:
