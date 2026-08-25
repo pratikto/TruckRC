@@ -1,4 +1,16 @@
 #include "DualTB6612.h"
+#include <esp_arduino_version.h>
+
+// Arduino ESP32 changed the LEDC API in core 3.x. These small compatibility
+// helpers keep the motor behavior identical on both core 2.x and core 3.x.
+static inline void writePwmChannel(uint8_t channel, uint32_t duty) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcWriteChannel(channel, duty);
+#else
+  ledcWrite(channel, duty);
+#endif
+}
+
 
 void DualTB6612::begin() {
   // STBY is optional. A value of -1 means hardware already pulls STBY high,
@@ -24,10 +36,15 @@ void DualTB6612::begin() {
 }
 
 void DualTB6612::cfgPwm(const ChannelPins& ch) {
-  // Arduino ESP32 3.x: attach GPIO to an explicit LEDC channel.
-  // The legacy ledcSetup()/ledcAttachPin() API was removed in core 3.x.
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  // Core 3.x combines timer setup and pin attachment in one call.
   ledcAttachChannel(ch.pwm, _freq, _bits, ch.pwmChan);
-  ledcWriteChannel(ch.pwmChan, 0);
+#else
+  // Core 2.x uses the original setup-then-attach API.
+  ledcSetup(ch.pwmChan, _freq, _bits);
+  ledcAttachPin(ch.pwm, ch.pwmChan);
+#endif
+  writePwmChannel(ch.pwmChan, 0);
 }
 
 void DualTB6612::apply(int speed, const ChannelPins& ch) {
@@ -39,12 +56,12 @@ void DualTB6612::apply(int speed, const ChannelPins& ch) {
     // Forward polarity: IN1=HIGH and IN2=LOW.
     digitalWrite(ch.in1, HIGH);
     digitalWrite(ch.in2, LOW);
-    ledcWriteChannel(ch.pwmChan, duty);
+    writePwmChannel(ch.pwmChan, duty);
   } else if (speed < 0) {
     // Reverse the input polarity for backward rotation.
     digitalWrite(ch.in1, LOW);
     digitalWrite(ch.in2, HIGH);
-    ledcWriteChannel(ch.pwmChan, duty);
+    writePwmChannel(ch.pwmChan, duty);
   } else if (_zeroMode == ZeroMode::Brake) {
     doBrake(ch);
   } else {
@@ -56,14 +73,14 @@ void DualTB6612::doBrake(const ChannelPins& ch) {
   // Driving both inputs HIGH with zero PWM applies active/short braking.
   digitalWrite(ch.in1, HIGH);
   digitalWrite(ch.in2, HIGH);
-  ledcWriteChannel(ch.pwmChan, 0);
+  writePwmChannel(ch.pwmChan, 0);
 }
 
 void DualTB6612::doCoast(const ChannelPins& ch) {
   // Driving both inputs LOW releases the H-bridge so the motor can coast.
   digitalWrite(ch.in1, LOW);
   digitalWrite(ch.in2, LOW);
-  ledcWriteChannel(ch.pwmChan, 0);
+  writePwmChannel(ch.pwmChan, 0);
 }
 
 void DualTB6612::setSpeedA(int speed) {
@@ -92,8 +109,8 @@ void DualTB6612::standby(bool enable) {
 
   digitalWrite(_stby, enable ? LOW : HIGH);
   if (enable) {
-    ledcWriteChannel(_chA.pwmChan, 0);
-    ledcWriteChannel(_chB.pwmChan, 0);
+    writePwmChannel(_chA.pwmChan, 0);
+    writePwmChannel(_chB.pwmChan, 0);
   }
 }
 
