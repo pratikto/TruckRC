@@ -1,4 +1,15 @@
 #include "PFServo.h"
+#include <esp_arduino_version.h>
+
+// Hide the Arduino ESP32 2.x/3.x LEDC API difference from the servo logic.
+static inline void writeServoPwm(uint8_t channel, uint32_t duty) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcWriteChannel(channel, duty);
+#else
+  ledcWrite(channel, duty);
+#endif
+}
+
 
 PFServo::PFServo(int pinServo, int ledcChannel,
                  uint32_t freq, uint8_t resolutionBits,
@@ -8,10 +19,14 @@ PFServo::PFServo(int pinServo, int ledcChannel,
 {}
 
 void PFServo::begin() {
-  // Arduino ESP32 3.x: attach the servo GPIO to its explicit channel.
   // The servo needs a separate LEDC channel because it runs at 50 Hz,
   // while the motor PWM channels run at 20 kHz.
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
   ledcAttachChannel(_pin, _freq, _resBits, _ch);
+#else
+  ledcSetup(_ch, _freq, _resBits);
+  ledcAttachPin(_pin, _ch);
+#endif
   setAngle(90);
 }
 
@@ -37,5 +52,5 @@ void PFServo::_applyUs(int us) {
   // Example: a 1500 us pulse over a 20000 us period equals 7.5% duty.
   float dutyCycle = (float)us / 20000.0f;
   uint32_t duty = (uint32_t)(dutyCycle * ((1UL << _resBits) - 1));
-  ledcWriteChannel(_ch, duty);
+  writeServoPwm(_ch, duty);
 }
