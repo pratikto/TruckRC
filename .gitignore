@@ -3,3 +3,4 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+\n# Local Wi-Fi credentials; never commit this file\ninclude/secrets.h\n
