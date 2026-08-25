@@ -45,9 +45,15 @@ DualTB6612 motors(PIN_STBY, chA, chB, 20000, 10, ZeroMode::Brake);
 // 16-bit resolution, and a pulse-width range of 1000..2000 microseconds.
 PFServo steering(PIN_SERVO, CH_SERVO);
 
-// CRSF uses UART1, independently from USB Serial, so debug output cannot
-// interfere with the ExpressLRS receiver link running at 420000 baud.
-HardwareSerial crsfSerial(1);
+// CRSF uses UART0 on GPIO21/GPIO20. Debug logging still uses the native
+// USB-CDC peripheral, so it does not share this hardware UART with CRSF.
+//
+// Why UART0 instead of UART1?
+// Some Arduino-ESP32 3.x releases have shown ESP32-C3 UART1 RX regressions.
+// The original Core 2.x program worked on UART1, but the isolated Core 3.x
+// test received no CRSF frames. Using UART0 tests that specific regression
+// without changing the receiver wiring, CRSF baud rate, or control logic.
+HardwareSerial crsfSerial(0);
 AlfredoCRSF crsf;
 PocketMaster PocketRadio(crsf);
 
@@ -127,7 +133,7 @@ void setup() {
 
   crsfSerial.begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_RX, PIN_TX);
   crsf.begin(crsfSerial);
-  LOGI("CRSF", "UART1 @ %d baud (RX=%d TX=%d)",
+  LOGI("CRSF", "UART0 @ %d baud (RX=%d TX=%d)",
        (int)CRSF_BAUDRATE, PIN_RX, PIN_TX);
 
   // "rc-cal" is the NVS namespace used to store receiver calibration values.
