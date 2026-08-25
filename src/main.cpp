@@ -71,6 +71,38 @@ unsigned long failsafeStageStartedMs = 0;
 void debugPrintChannels();
 void resetFailsafe();
 void serviceFailsafe();
+void serviceUartDiagnostic();
+
+// UART diagnostic counters are deliberately observational: available() only
+// reports how many bytes are buffered; it does not remove bytes that AlfredoCRSF
+// needs to decode. This lets us distinguish an electrical/UART reception problem
+// from a CRSF parser/link-detection problem.
+size_t uartSamplesWithData = 0;
+size_t uartPeakBuffered = 0;
+unsigned long uartLastDiagnosticMs = 0;
+
+void serviceUartDiagnostic() {
+  const size_t buffered = crsfSerial.available();
+
+  if (buffered > 0) {
+    ++uartSamplesWithData;
+    if (buffered > uartPeakBuffered) {
+      uartPeakBuffered = buffered;
+    }
+  }
+
+  const unsigned long now = millis();
+  if (now - uartLastDiagnosticMs >= 1000UL) {
+    LOGI("UART",
+         "RX diagnostic: samples-with-data=%u, peak-buffered=%u byte(s)",
+         (unsigned int)uartSamplesWithData,
+         (unsigned int)uartPeakBuffered);
+
+    uartSamplesWithData = 0;
+    uartPeakBuffered = 0;
+    uartLastDiagnosticMs = now;
+  }
+}
 
 // Every LOGx() macro routes its formatted line to the local USB monitor.
 void writeLogLine(const char* line) {
@@ -157,6 +189,10 @@ void setup() {
 }
 
 void loop() {
+  // Observe the RX buffer before AlfredoCRSF consumes it. available() does not
+  // remove data, so the following CRSF update still receives the same bytes.
+  serviceUartDiagnostic();
+
   // Call this as frequently as possible to process CRSF frames and link status.
   PocketRadio.update();
 
