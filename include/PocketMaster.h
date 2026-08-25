@@ -3,7 +3,7 @@
 #include <Preferences.h>
 #include <AlfredoCRSF.h>
 
-  // Pocket (Mode 2) channel mapping:
+  // RadioMaster Pocket Mode 2 channel indexes as reported by CRSF.
   static constexpr uint8_t ROLL     = 0;
   static constexpr uint8_t PITCH    = 1;
   static constexpr uint8_t THROTTLE = 2;
@@ -17,7 +17,7 @@
 
 class PocketMaster {
 public:
-  //initialization function
+  // Open the calibration namespace and load saved channel limits from NVS.
   explicit PocketMaster(AlfredoCRSF& crsf) : crsf_(crsf) {}
   bool begin(const char* nvs_ns = "rc-cal");
   void update();
@@ -25,17 +25,18 @@ public:
   bool isLinkUp() const { return link_up_; }
   bool isArmed;
   
-  //data passing function
+  // Channel accessors. raw() returns CRSF pulse values; val() returns the
+  // normalized value produced by scaleCentered() or scaleLinear().
   uint16_t raw(uint8_t a) const;
   uint16_t val(uint8_t a) const;
   uint16_t max(uint8_t a) const;
   uint16_t min(uint8_t a) const;
 
-  //check link quality
+  // Return CRSF uplink link quality as reported by the receiver statistics.
   uint16_t linkQuality() const { return lq_; }
 
 // ============================================================
-// 💾 Persistent calibration (NVS)
+// Persistent channel calibration stored in ESP32 NVS
 // ============================================================
   void startCalibration();
   void saveCalibration(bool save = true);
@@ -43,7 +44,7 @@ public:
   void resetCalibration();
   
 // ============================================================
-// ⏱️ Auto-save calibration variables
+// Calibration status and configuration
 // ============================================================
   bool isCalibSaved() {return calibSaved;}
   bool isCallibrated;
@@ -53,9 +54,9 @@ public:
 
 private:
 // ============================================================
-// 📦 RadioMaster Data Structures
+// Internal RadioMaster channel representations
 // ============================================================
-  // ⏱️ Auto-save calibration variables
+  // Calibration is saved after inputs stop changing for this duration.
   unsigned long lastCalibChange = 0;
   const unsigned long CALIB_SAVE_DELAY = 3000;
   bool calibSaved = false;
@@ -70,12 +71,12 @@ private:
     uint16_t raw = 1500, 
     min = 1500, 
     max = 1500, 
-    val = 500; // val: 0..1000
+    val = 500; // Normalized value: 0..1000, with 500 as center for stick axes.
   };
 
   struct Button {
     uint16_t raw = 1500;
-    uint16_t val = 0;   //0 = Unknown, 1 = up, 2 = mid, 3 = down
+    uint16_t val = 0; // 0=unknown, 1=up, 2=middle, 3=down.
     bool up = false;
     bool mid = false;
     bool down = false;
@@ -83,9 +84,9 @@ private:
   };
 
 // ============================================================
-// 🔧 Utilities & helpers
+// Scaling and decoding helpers
 // ============================================================
-  // helpers
+  // Clamp and integer-map helpers avoid floating-point channel conversion.
   static inline uint16_t clampi(uint16_t v, uint16_t lo, uint16_t hi) {
     return (v < lo) ? lo : (v > hi) ? hi : v;
   }
@@ -94,21 +95,18 @@ private:
     if (inMax <= inMin) return outMin;
     return outMin + (uint32_t)(x - inMin) * (outMax - outMin) / (inMax - inMin);
   }
-    // a.max = assignMax(a.max, raw);
-    // a.min = assignMin(a.min, raw);
   uint16_t assignMax(uint16_t a, uint16_t b) { return (b > a) ? b : a; }
   uint16_t assignMin(uint16_t a, uint16_t b) { return (b < a) ? b : a; }
   
   void updateMinMax(Analog& axis);
 
-  // 🧩 Decode switch helpers (with string return)
+  // Decode a three-position switch from its raw CRSF pulse value.
   void decodeSwitch (Button &v);
-  // uint16_t scaleCentered(uint16_t raw, uint16_t min, uint16_t max) const;
-  // uint16_t scaleLinear  (uint16_t raw, uint16_t min, uint16_t max) const;
+
+  // Centered scaling is used for sticks; linear scaling is used for throttle
+  // and the S1 control. Both produce values in the range 0..1000.
   void scaleCentered(Analog &axis) const;
   void scaleLinear(Analog &axis) const;
-  // void scaleCentered(Analog &axis, uint16_t raw) const;
-  // void scaleLinear(Analog &axis, uint16_t raw) const;
   AlfredoCRSF& crsf_;
   Preferences  nvs_;
   const char*  nvs_ns_ = "rc-cal";
