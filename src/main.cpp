@@ -85,6 +85,27 @@ enum class WiFiConnectionStage : uint8_t {
 };
 
 WiFiConnectionStage wifiStage = WiFiConnectionStage::Disabled;
+
+// Convert the Wi-Fi connection stage into readable text for logging.
+inline const char* wifiConnectionStageToString(WiFiConnectionStage stage) {
+    switch (stage) {
+        case WiFiConnectionStage::Disabled:
+            return "Disabled";
+
+        case WiFiConnectionStage::Connecting:
+            return "Connecting";
+
+        case WiFiConnectionStage::WaitingToRetry:
+            return "WaitingToRetry";
+
+        case WiFiConnectionStage::Connected:
+            return "Connected";
+
+        default:
+            return "Unknown";
+    }
+}
+
 unsigned long wifiStageStartedMs = 0;
 
 constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 30000UL;
@@ -363,12 +384,13 @@ void loop() {
 
       if (PocketRadio.isCalibSaved()) {
         LOGI("CAL",
-             "ROLL[max:%4u min:%4u] PITCH[max:%4u min:%4u] YAW[max:%4u min:%4u] THR[max:%4u min:%4u] S1[max:%4u min:%4u]",
+             "ROLL[max:%4u min:%4u] PITCH[max:%4u min:%4u] YAW[max:%4u min:%4u] THR[max:%4u min:%4u] S1[max:%4u min:%4u] WiFi[ip:%s status:%s]",
              PocketRadio.max(ROLL), PocketRadio.min(ROLL),
              PocketRadio.max(PITCH), PocketRadio.min(PITCH),
              PocketRadio.max(YAW), PocketRadio.min(YAW),
              PocketRadio.max(THROTTLE), PocketRadio.min(THROTTLE),
-             PocketRadio.max(S1), PocketRadio.min(S1));
+             PocketRadio.max(S1), PocketRadio.min(S1),
+             WiFi.localIP().toString().c_str(), wifiConnectionStageToString(wifiStage));
       }
     }
   } else {
