@@ -79,6 +79,7 @@ bool wifiEnabled = false;
 // "wifi:sta is connecting, return error".
 enum class WiFiConnectionStage : uint8_t {
   Disabled,
+  ResettingRadio,
   Connecting,
   WaitingToRetry,
   Connected
@@ -91,6 +92,9 @@ inline const char* wifiConnectionStageToString(WiFiConnectionStage stage) {
     switch (stage) {
         case WiFiConnectionStage::Disabled:
             return "Disabled";
+
+        case WiFiConnectionStage::ResettingRadio:
+            return "ResettingRadio";
 
         case WiFiConnectionStage::Connecting:
             return "Connecting";
@@ -107,9 +111,14 @@ inline const char* wifiConnectionStageToString(WiFiConnectionStage stage) {
 }
 
 unsigned long wifiStageStartedMs = 0;
+unsigned long lastWiFiStatusLogMs = 0;
+bool configuredNetworkWasFound = false;
+bool initialWiFiScanCompleted = false;
 
+constexpr unsigned long WIFI_RADIO_RESET_MS = 500UL;
 constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 30000UL;
 constexpr unsigned long WIFI_RETRY_DELAY_MS = 3000UL;
+constexpr unsigned long WIFI_STATUS_LOG_INTERVAL_MS = 2000UL;
 
 // This state machine replaces the previous delay-based failsafe sequence.
 // Using millis() keeps CRSF reception and Wi-Fi servicing responsive.
@@ -125,6 +134,8 @@ unsigned long failsafeStageStartedMs = 0;
 void debugPrintChannels();
 void startWiFi();
 void serviceWiFi();
+void beginWiFiConnection();
+void scanForConfiguredNetwork();
 void resetFailsafe();
 void serviceFailsafe();
 
@@ -170,6 +181,64 @@ void writeLogLine(const char* line) {
   WebSerial.print(webLine);
 }
 
+void scanForConfiguredNetwork() {
+  // Scan once at boot before connecting. This is diagnostic only: it confirms
+  // whether the ESP32-C3 can actually see the configured 2.4 GHz SSID.
+  //
+  // The password is intentionally never printed.
+  LOGI("WIFI", "Scanning for configured SSID: %s", WIFI_SSID);
+
+  const int networkCount = WiFi.scanNetworks(false, true);
+  configuredNetworkWasFound = false;
+
+  if (networkCount < 0) {
+    LOGW("WIFI", "Network scan failed with result %d", networkCount);
+  } else {
+    for (int i = 0; i < networkCount; ++i) {
+      if (WiFi.SSID(i) == WIFI_SSID) {
+        configuredNetworkWasFound = true;
+        LOGI("WIFI",
+             "SSID found: RSSI=%d dBm, channel=%d, authentication=%d",
+             WiFi.RSSI(i),
+             WiFi.channel(i),
+             static_cast<int>(WiFi.encryptionType(i)));
+      }
+    }
+
+    if (!configuredNetworkWasFound) {
+      LOGW("WIFI",
+           "Configured SSID was not found among %d visible network(s)",
+           networkCount);
+    }
+  }
+
+  WiFi.scanDelete();
+  initialWiFiScanCompleted = true;
+}
+
+void beginWiFiConnection() {
+  // Re-enable station mode only after the previous radio instance has been
+  // fully stopped. This avoids overlapping begin/disconnect operations on
+  // Arduino-ESP32 Core 2.x.
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(false);
+
+  // Disabling modem sleep improves connection diagnostics and latency while
+  // CRSF and Wi-Fi are being tested together. It can be revisited later if
+  // lower power consumption becomes important.
+  WiFi.setSleep(false);
+
+  if (!initialWiFiScanCompleted) {
+    scanForConfiguredNetwork();
+  }
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  wifiStage = WiFiConnectionStage::Connecting;
+  wifiStageStartedMs = millis();
+
+  LOGI("WIFI", "Connecting to %s...", WIFI_SSID);
+}
+
 void startWiFi() {
   // An empty SSID means include/secrets.h has not been created yet.
   wifiEnabled = WIFI_SSID[0] != '\0';
@@ -180,22 +249,16 @@ void startWiFi() {
     return;
   }
 
-  WiFi.mode(WIFI_STA);
-  // Station mode joins the existing IndiHome router instead of creating
-  // a separate ESP32 access point.
-  //
-  // Automatic reconnect is disabled because this application uses the
-  // non-blocking state machine below. Having both mechanisms active can cause
-  // two connection attempts to overlap.
-  WiFi.setAutoReconnect(false);
-  // Avoid repeatedly writing Wi-Fi configuration to internal flash.
+  // Do not store credentials in Wi-Fi NVS because they already come from the
+  // local secrets.h file. Starting from WIFI_OFF also clears any stale station
+  // state left by a previous firmware image.
   WiFi.persistent(false);
+  WiFi.disconnect(true, false);
+  WiFi.mode(WIFI_OFF);
 
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  wifiStage = WiFiConnectionStage::Connecting;
+  wifiStage = WiFiConnectionStage::ResettingRadio;
   wifiStageStartedMs = millis();
-
-  LOGI("WIFI", "Connecting to %s...", WIFI_SSID);
+  LOGI("WIFI", "Resetting Wi-Fi radio before the first connection attempt");
 }
 
 void serviceWiFi() {
@@ -204,6 +267,18 @@ void serviceWiFi() {
 
   const unsigned long now = millis();
   const wl_status_t status = WiFi.status();
+
+  // Periodic status output makes the state machine observable without flooding
+  // USB Serial or WebSerial. The numeric wl_status_t value is kept because it
+  // is useful when comparing behavior between Arduino core versions.
+  if (now - lastWiFiStatusLogMs >= WIFI_STATUS_LOG_INTERVAL_MS) {
+    LOGI("WIFI",
+         "Stage=%s, status=%d, SSID-visible=%s",
+         wifiConnectionStageToString(wifiStage),
+         static_cast<int>(status),
+         configuredNetworkWasFound ? "yes" : "no");
+    lastWiFiStatusLogMs = now;
+  }
 
   if (status == WL_CONNECTED) {
     if (wifiStage != WiFiConnectionStage::Connected) {
@@ -230,13 +305,22 @@ void serviceWiFi() {
         wifiStageStartedMs = now;
         break;
 
+      case WiFiConnectionStage::ResettingRadio:
+        // WiFi.disconnect() is asynchronous in some Core 2.x paths. Keep the
+        // radio off briefly before creating a new station instance.
+        if (now - wifiStageStartedMs >= WIFI_RADIO_RESET_MS) {
+          beginWiFiConnection();
+        }
+        break;
+
       case WiFiConnectionStage::Connecting:
         // Give association, authentication, and DHCP enough time to finish.
-        // Do not call reconnect() while this attempt is still active.
         if (now - wifiStageStartedMs >= WIFI_CONNECT_TIMEOUT_MS) {
           LOGW("WIFI", "Connection timed out (status=%d); retrying in %lu ms",
                static_cast<int>(status), WIFI_RETRY_DELAY_MS);
-          WiFi.disconnect(false, false);
+
+          WiFi.disconnect(true, false);
+          WiFi.mode(WIFI_OFF);
           wifiStage = WiFiConnectionStage::WaitingToRetry;
           wifiStageStartedMs = now;
         }
@@ -244,9 +328,8 @@ void serviceWiFi() {
 
       case WiFiConnectionStage::WaitingToRetry:
         if (now - wifiStageStartedMs >= WIFI_RETRY_DELAY_MS) {
-          LOGI("WIFI", "Starting a new connection attempt...");
-          WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-          wifiStage = WiFiConnectionStage::Connecting;
+          LOGI("WIFI", "Restarting the radio for a new connection attempt...");
+          wifiStage = WiFiConnectionStage::ResettingRadio;
           wifiStageStartedMs = now;
         }
         break;
