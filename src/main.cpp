@@ -107,6 +107,7 @@ FailsafeStage failsafeStage = FailsafeStage::Idle;
 unsigned long failsafeStageStartedMs = 0;
 
 void debugPrintChannels();
+void onWiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info);
 void startWiFi();
 void serviceWiFi();
 void resetFailsafe();
@@ -154,6 +155,15 @@ void writeLogLine(const char* line) {
   WebSerial.print(webLine);
 }
 
+// WiFi.status() collapses many failures into WL_DISCONNECTED (6).
+// The ESP32 event payload preserves the actual 802.11 disconnect reason, which
+// lets us distinguish authentication, association, signal, and AP-side errors.
+void onWiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info) {
+  (void)event;
+  LOGW("WIFI", "Station disconnected: reason=%u",
+       static_cast<unsigned int>(info.wifi_sta_disconnected.reason));
+}
+
 void startWiFi() {
   wifiEnabled = WIFI_SSID[0] != '\0';
 
@@ -166,6 +176,10 @@ void startWiFi() {
   // Follow the official WebSerial 2.1.2 Demo connection sequence exactly:
   // configure station mode, start the connection, and wait for its result.
   WiFi.mode(WIFI_STA);
+
+  // Register before WiFi.begin() so the first failed handshake is captured.
+  WiFi.onEvent(onWiFiStationDisconnected, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+
   wifiStage = WiFiConnectionStage::Connecting;
   LOGI("WIFI", "Connecting to %s...", WIFI_SSID);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
