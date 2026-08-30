@@ -74,12 +74,11 @@ AsyncWebServer server(80);
 bool webSerialStarted = false;
 bool wifiEnabled = false;
 
-// Wi-Fi connection is managed explicitly instead of mixing WiFi.reconnect()
-// with an active WiFi.begin() attempt. This prevents the ESP-IDF warning:
-// "wifi:sta is connecting, return error".
+// Wi-Fi uses a small non-blocking state machine. A connection attempt is
+// started once and then left alone for 30 seconds so the ESP-IDF station can
+// complete association, authentication, and DHCP without overlapping commands.
 enum class WiFiConnectionStage : uint8_t {
   Disabled,
-  ResettingRadio,
   Connecting,
   WaitingToRetry,
   Connected
@@ -87,35 +86,19 @@ enum class WiFiConnectionStage : uint8_t {
 
 WiFiConnectionStage wifiStage = WiFiConnectionStage::Disabled;
 
-// Convert the Wi-Fi connection stage into readable text for logging.
 inline const char* wifiConnectionStageToString(WiFiConnectionStage stage) {
-    switch (stage) {
-        case WiFiConnectionStage::Disabled:
-            return "Disabled";
-
-        case WiFiConnectionStage::ResettingRadio:
-            return "ResettingRadio";
-
-        case WiFiConnectionStage::Connecting:
-            return "Connecting";
-
-        case WiFiConnectionStage::WaitingToRetry:
-            return "WaitingToRetry";
-
-        case WiFiConnectionStage::Connected:
-            return "Connected";
-
-        default:
-            return "Unknown";
-    }
+  switch (stage) {
+    case WiFiConnectionStage::Disabled:       return "Disabled";
+    case WiFiConnectionStage::Connecting:     return "Connecting";
+    case WiFiConnectionStage::WaitingToRetry: return "WaitingToRetry";
+    case WiFiConnectionStage::Connected:      return "Connected";
+    default:                                  return "Unknown";
+  }
 }
 
 unsigned long wifiStageStartedMs = 0;
 unsigned long lastWiFiStatusLogMs = 0;
-bool configuredNetworkWasFound = false;
-bool initialWiFiScanCompleted = false;
 
-constexpr unsigned long WIFI_RADIO_RESET_MS = 500UL;
 constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 30000UL;
 constexpr unsigned long WIFI_RETRY_DELAY_MS = 3000UL;
 constexpr unsigned long WIFI_STATUS_LOG_INTERVAL_MS = 2000UL;
@@ -135,7 +118,6 @@ void debugPrintChannels();
 void startWiFi();
 void serviceWiFi();
 void beginWiFiConnection();
-void scanForConfiguredNetwork();
 void resetFailsafe();
 void serviceFailsafe();
 
@@ -181,66 +163,16 @@ void writeLogLine(const char* line) {
   WebSerial.print(webLine);
 }
 
-void scanForConfiguredNetwork() {
-  // Scan once at boot before connecting. This is diagnostic only: it confirms
-  // whether the ESP32-C3 can actually see the configured 2.4 GHz SSID.
-  //
-  // The password is intentionally never printed.
-  LOGI("WIFI", "Scanning for configured SSID: %s", WIFI_SSID);
-
-  const int networkCount = WiFi.scanNetworks(false, true);
-  configuredNetworkWasFound = false;
-
-  if (networkCount < 0) {
-    LOGW("WIFI", "Network scan failed with result %d", networkCount);
-  } else {
-    for (int i = 0; i < networkCount; ++i) {
-      if (WiFi.SSID(i) == WIFI_SSID) {
-        configuredNetworkWasFound = true;
-        LOGI("WIFI",
-             "SSID found: RSSI=%d dBm, channel=%d, authentication=%d",
-             WiFi.RSSI(i),
-             WiFi.channel(i),
-             static_cast<int>(WiFi.encryptionType(i)));
-      }
-    }
-
-    if (!configuredNetworkWasFound) {
-      LOGW("WIFI",
-           "Configured SSID was not found among %d visible network(s)",
-           networkCount);
-    }
-  }
-
-  WiFi.scanDelete();
-  initialWiFiScanCompleted = true;
-}
-
 void beginWiFiConnection() {
-  // Re-enable station mode only after the previous radio instance has been
-  // fully stopped. This avoids overlapping begin/disconnect operations on
-  // Arduino-ESP32 Core 2.x.
-  WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(false);
-
-  // Disabling modem sleep improves connection diagnostics and latency while
-  // CRSF and Wi-Fi are being tested together. It can be revisited later if
-  // lower power consumption becomes important.
-  WiFi.setSleep(false);
-
-  if (!initialWiFiScanCompleted) {
-    scanForConfiguredNetwork();
-  }
-
+  // Do not call reconnect(), scanNetworks(), or reset the radio while an
+  // attempt is active. Core 2.x must be allowed to finish WiFi.begin().
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   wifiStage = WiFiConnectionStage::Connecting;
   wifiStageStartedMs = millis();
-
   LOGI("WIFI", "Connecting to %s...", WIFI_SSID);
 }
 
 void startWiFi() {
-  // An empty SSID means include/secrets.h has not been created yet.
   wifiEnabled = WIFI_SSID[0] != '\0';
 
   if (!wifiEnabled) {
@@ -249,34 +181,26 @@ void startWiFi() {
     return;
   }
 
-  // Do not store credentials in Wi-Fi NVS because they already come from the
-  // local secrets.h file. Starting from WIFI_OFF also clears any stale station
-  // state left by a previous firmware image.
+  // Credentials remain in the local secrets.h file rather than Wi-Fi NVS.
+  // Configure station mode once; do not scan or power-cycle the radio here.
   WiFi.persistent(false);
-  WiFi.disconnect(true, false);
-  WiFi.mode(WIFI_OFF);
-
-  wifiStage = WiFiConnectionStage::ResettingRadio;
-  wifiStageStartedMs = millis();
-  LOGI("WIFI", "Resetting Wi-Fi radio before the first connection attempt");
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(false);
+  WiFi.setSleep(false);
+  beginWiFiConnection();
 }
 
 void serviceWiFi() {
-  // This function is called every loop and never blocks the CRSF control path.
+  // This function never blocks the CRSF control path.
   if (!wifiEnabled) return;
 
   const unsigned long now = millis();
   const wl_status_t status = WiFi.status();
 
-  // Periodic status output makes the state machine observable without flooding
-  // USB Serial or WebSerial. The numeric wl_status_t value is kept because it
-  // is useful when comparing behavior between Arduino core versions.
   if (now - lastWiFiStatusLogMs >= WIFI_STATUS_LOG_INTERVAL_MS) {
-    LOGI("WIFI",
-         "Stage=%s, status=%d, SSID-visible=%s",
+    LOGI("WIFI", "Stage=%s, status=%d",
          wifiConnectionStageToString(wifiStage),
-         static_cast<int>(status),
-         configuredNetworkWasFound ? "yes" : "no");
+         static_cast<int>(status));
     lastWiFiStatusLogMs = now;
   }
 
@@ -287,7 +211,6 @@ void serviceWiFi() {
       LOGI("WIFI", "Connected. IP: %s", WiFi.localIP().toString().c_str());
 
       if (!webSerialStarted) {
-        // WebSerial registers its /webserial route with AsyncWebServer.
         WebSerial.begin(&server);
         server.begin();
         webSerialStarted = true;
@@ -297,30 +220,18 @@ void serviceWiFi() {
   } else {
     switch (wifiStage) {
       case WiFiConnectionStage::Connected:
-        // A previously working connection was lost. Stop the old attempt and
-        // wait briefly before starting a fresh one.
-        LOGW("WIFI", "Connection lost; retrying in background");
-        WiFi.disconnect(false, false);
+        LOGW("WIFI", "Connection lost; retrying in %lu ms", WIFI_RETRY_DELAY_MS);
         wifiStage = WiFiConnectionStage::WaitingToRetry;
         wifiStageStartedMs = now;
         break;
 
-      case WiFiConnectionStage::ResettingRadio:
-        // WiFi.disconnect() is asynchronous in some Core 2.x paths. Keep the
-        // radio off briefly before creating a new station instance.
-        if (now - wifiStageStartedMs >= WIFI_RADIO_RESET_MS) {
-          beginWiFiConnection();
-        }
-        break;
-
       case WiFiConnectionStage::Connecting:
-        // Give association, authentication, and DHCP enough time to finish.
         if (now - wifiStageStartedMs >= WIFI_CONNECT_TIMEOUT_MS) {
+          // Cancel only after the full timeout. Keep station mode enabled and
+          // wait before issuing the next WiFi.begin() call.
           LOGW("WIFI", "Connection timed out (status=%d); retrying in %lu ms",
                static_cast<int>(status), WIFI_RETRY_DELAY_MS);
-
-          WiFi.disconnect(true, false);
-          WiFi.mode(WIFI_OFF);
+          WiFi.disconnect(false, false);
           wifiStage = WiFiConnectionStage::WaitingToRetry;
           wifiStageStartedMs = now;
         }
@@ -328,9 +239,7 @@ void serviceWiFi() {
 
       case WiFiConnectionStage::WaitingToRetry:
         if (now - wifiStageStartedMs >= WIFI_RETRY_DELAY_MS) {
-          LOGI("WIFI", "Restarting the radio for a new connection attempt...");
-          wifiStage = WiFiConnectionStage::ResettingRadio;
-          wifiStageStartedMs = now;
+          beginWiFiConnection();
         }
         break;
 
@@ -340,7 +249,6 @@ void serviceWiFi() {
   }
 
   if (webSerialStarted) {
-    // Perform WebSocket client cleanup and periodically flush buffered logs.
     WebSerial.loop();
   }
 }
