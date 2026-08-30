@@ -74,13 +74,12 @@ AsyncWebServer server(80);
 bool webSerialStarted = false;
 bool wifiEnabled = false;
 
-// Wi-Fi uses a small non-blocking state machine. A connection attempt is
-// started once and then left alone for 30 seconds so the ESP-IDF station can
-// complete association, authentication, and DHCP without overlapping commands.
+// Keep the Wi-Fi states small and descriptive. Connection setup follows the
+// official WebSerial 2.1.2 Demo example before any retry logic is introduced.
 enum class WiFiConnectionStage : uint8_t {
   Disabled,
   Connecting,
-  WaitingToRetry,
+  Failed,
   Connected
 };
 
@@ -88,20 +87,13 @@ WiFiConnectionStage wifiStage = WiFiConnectionStage::Disabled;
 
 inline const char* wifiConnectionStageToString(WiFiConnectionStage stage) {
   switch (stage) {
-    case WiFiConnectionStage::Disabled:       return "Disabled";
-    case WiFiConnectionStage::Connecting:     return "Connecting";
-    case WiFiConnectionStage::WaitingToRetry: return "WaitingToRetry";
-    case WiFiConnectionStage::Connected:      return "Connected";
-    default:                                  return "Unknown";
+    case WiFiConnectionStage::Disabled:   return "Disabled";
+    case WiFiConnectionStage::Connecting: return "Connecting";
+    case WiFiConnectionStage::Failed:     return "Failed";
+    case WiFiConnectionStage::Connected:  return "Connected";
+    default:                              return "Unknown";
   }
 }
-
-unsigned long wifiStageStartedMs = 0;
-unsigned long lastWiFiStatusLogMs = 0;
-
-constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 30000UL;
-constexpr unsigned long WIFI_RETRY_DELAY_MS = 3000UL;
-constexpr unsigned long WIFI_STATUS_LOG_INTERVAL_MS = 2000UL;
 
 // This state machine replaces the previous delay-based failsafe sequence.
 // Using millis() keeps CRSF reception and Wi-Fi servicing responsive.
@@ -117,7 +109,6 @@ unsigned long failsafeStageStartedMs = 0;
 void debugPrintChannels();
 void startWiFi();
 void serviceWiFi();
-void beginWiFiConnection();
 void resetFailsafe();
 void serviceFailsafe();
 
@@ -163,15 +154,6 @@ void writeLogLine(const char* line) {
   WebSerial.print(webLine);
 }
 
-void beginWiFiConnection() {
-  // Do not call reconnect(), scanNetworks(), or reset the radio while an
-  // attempt is active. Core 2.x must be allowed to finish WiFi.begin().
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  wifiStage = WiFiConnectionStage::Connecting;
-  wifiStageStartedMs = millis();
-  LOGI("WIFI", "Connecting to %s...", WIFI_SSID);
-}
-
 void startWiFi() {
   wifiEnabled = WIFI_SSID[0] != '\0';
 
@@ -181,73 +163,31 @@ void startWiFi() {
     return;
   }
 
-  // Credentials remain in the local secrets.h file rather than Wi-Fi NVS.
-  // Configure station mode once; do not scan or power-cycle the radio here.
-  WiFi.persistent(false);
+  // Follow the official WebSerial 2.1.2 Demo connection sequence exactly:
+  // configure station mode, start the connection, and wait for its result.
   WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(false);
-  WiFi.setSleep(false);
-  beginWiFiConnection();
+  wifiStage = WiFiConnectionStage::Connecting;
+  LOGI("WIFI", "Connecting to %s...", WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  if (WiFi.waitForConnectResult() != WL_CONNECTED) {
+    wifiStage = WiFiConnectionStage::Failed;
+    LOGW("WIFI", "Connection failed (status=%d)", static_cast<int>(WiFi.status()));
+    return;
+  }
+
+  wifiStage = WiFiConnectionStage::Connected;
+  LOGI("WIFI", "Connected. IP: %s", WiFi.localIP().toString().c_str());
+
+  // The official example initializes WebSerial only after Wi-Fi has connected.
+  WebSerial.begin(&server);
+  server.begin();
+  webSerialStarted = true;
+  LOGI("WEB", "Open http://%s/webserial", WiFi.localIP().toString().c_str());
 }
 
 void serviceWiFi() {
-  // This function never blocks the CRSF control path.
-  if (!wifiEnabled) return;
-
-  const unsigned long now = millis();
-  const wl_status_t status = WiFi.status();
-
-  if (now - lastWiFiStatusLogMs >= WIFI_STATUS_LOG_INTERVAL_MS) {
-    LOGI("WIFI", "Stage=%s, status=%d",
-         wifiConnectionStageToString(wifiStage),
-         static_cast<int>(status));
-    lastWiFiStatusLogMs = now;
-  }
-
-  if (status == WL_CONNECTED) {
-    if (wifiStage != WiFiConnectionStage::Connected) {
-      wifiStage = WiFiConnectionStage::Connected;
-      wifiStageStartedMs = now;
-      LOGI("WIFI", "Connected. IP: %s", WiFi.localIP().toString().c_str());
-
-      if (!webSerialStarted) {
-        WebSerial.begin(&server);
-        server.begin();
-        webSerialStarted = true;
-        LOGI("WEB", "Open http://%s/webserial", WiFi.localIP().toString().c_str());
-      }
-    }
-  } else {
-    switch (wifiStage) {
-      case WiFiConnectionStage::Connected:
-        LOGW("WIFI", "Connection lost; retrying in %lu ms", WIFI_RETRY_DELAY_MS);
-        wifiStage = WiFiConnectionStage::WaitingToRetry;
-        wifiStageStartedMs = now;
-        break;
-
-      case WiFiConnectionStage::Connecting:
-        if (now - wifiStageStartedMs >= WIFI_CONNECT_TIMEOUT_MS) {
-          // Cancel only after the full timeout. Keep station mode enabled and
-          // wait before issuing the next WiFi.begin() call.
-          LOGW("WIFI", "Connection timed out (status=%d); retrying in %lu ms",
-               static_cast<int>(status), WIFI_RETRY_DELAY_MS);
-          WiFi.disconnect(false, false);
-          wifiStage = WiFiConnectionStage::WaitingToRetry;
-          wifiStageStartedMs = now;
-        }
-        break;
-
-      case WiFiConnectionStage::WaitingToRetry:
-        if (now - wifiStageStartedMs >= WIFI_RETRY_DELAY_MS) {
-          beginWiFiConnection();
-        }
-        break;
-
-      case WiFiConnectionStage::Disabled:
-        break;
-    }
-  }
-
+  // WebSerial 2.1.2 requires loop() to flush data and service its clients.
   if (webSerialStarted) {
     WebSerial.loop();
   }
